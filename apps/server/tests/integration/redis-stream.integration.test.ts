@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import Redis from "ioredis";
-import { EVENT_TYPE, type AgentEvent } from "./types";
-import { RedisStreamBus } from "./redis-stream";
-import { AgentRuntime } from "../runtime/agent-runtime";
+import { EVENT_TYPE, type AgentEvent } from "../../src/events/types";
+import { RedisStreamBus } from "../../src/events/redis-stream";
+import { AgentRuntime } from "../../src/runtime/agent-runtime";
 
 const runRedisTests = process.env.RUN_REDIS_TESTS === "true";
 const describeIfRedis = runRedisTests ? describe : describe.skip;

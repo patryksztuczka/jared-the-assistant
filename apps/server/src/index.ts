@@ -1,10 +1,10 @@
 import Redis from "ioredis";
 import { createApp } from "./app";
-import { createDrizzleChatIngressStore } from "./chat/ingress-store";
-import { createDrizzleChatMessageStore } from "./chat/message-store";
-import { createDrizzleChatRunStore } from "./chat/run-store";
+import { createDrizzleChatIngressService } from "./services/chat/ingress-service";
+import { createDrizzleChatMessageService } from "./services/chat/message-service";
+import { createDrizzleChatRunService } from "./services/chat/run-service";
 import { OutboxPublisher } from "./events/outbox-publisher";
-import { createDrizzleOutboxStore } from "./events/outbox-store";
+import { createDrizzleOutboxService } from "./services/events/outbox-service";
 import { RedisStreamBus } from "./events/redis-stream";
 import { AgentRuntime } from "./runtime/agent-runtime";
 import { db } from "../db";
@@ -19,18 +19,18 @@ const redis = new Redis(redisUrl);
 const bus = new RedisStreamBus(redis, {
   streamKey: redisStreamKey,
 });
-const messageStore = createDrizzleChatMessageStore(db);
-const runStore = createDrizzleChatRunStore(db);
-const ingressStore = createDrizzleChatIngressStore(db);
-const outboxStore = createDrizzleOutboxStore(db);
+const messageService = createDrizzleChatMessageService(db);
+const runService = createDrizzleChatRunService(db);
+const ingressService = createDrizzleChatIngressService(db);
+const outboxService = createDrizzleOutboxService(db);
 const outboxPublisher = new OutboxPublisher({
-  outboxStore,
+  outboxService,
   publisher: bus,
 });
 const runtime = new AgentRuntime({
   bus,
-  messageStore,
-  runStore,
+  messageService,
+  runService,
   consumerGroup: redisConsumerGroup,
   consumerName: redisConsumerName,
 });
@@ -39,7 +39,7 @@ await runtime.init();
 runtime.start();
 outboxPublisher.start();
 
-const app = createApp({ ingressStore, messageStore, runStore });
+const app = createApp({ ingressService, messageService, runService });
 
 const server = Bun.serve({
   port,

@@ -7,6 +7,19 @@ Use it as the default operating guide for implementation and validation.
 - Stack: Bun runtime, TypeScript, Hono.
 - CI workflow: `.github/workflows/server-ci.yml`.
 
+## Server Structure (Current)
+- App entrypoints live in `apps/server/src/app.ts` and `apps/server/src/index.ts`.
+- Runtime orchestration lives in `apps/server/src/runtime/*`.
+- Event contracts and stream transport live in `apps/server/src/events/*`.
+- Business/data access logic lives in `apps/server/src/services/**`.
+- Keep tests out of `src`; place them under `apps/server/tests/**`.
+
+## Service Naming Rules
+- Use `*Service` naming for interfaces, variables, and dependency injection options.
+- Use factory names `createDrizzle...Service` and `createInMemory...Service`.
+- Avoid introducing new `*Store` names/files; prefer `*Service` consistently.
+- When touching legacy areas that still use `store` naming, migrate to `service` in the same change when safe.
+
 ## Extra Rule Files
 At the time this file was written, none were found:
 - `.cursorrules` (not present)
@@ -41,9 +54,9 @@ From `apps/server`:
 
 ## Single Test Execution (Important)
 Use Bun test filters directly when making targeted changes:
-- Single file: `bun test src/app.test.ts`
+- Single file: `bun test tests/api/app.test.ts`
 - Name filter: `bun test -t "returns success response"`
-- File + name filter: `bun test src/app.test.ts -t "GET /api"`
+- File + name filter: `bun test tests/api/app.test.ts -t "GET /api"`
 Workflow recommendation:
 1. Run the most targeted single test first.
 2. Then run `bun run test` before finishing.
@@ -122,7 +135,7 @@ Current API app entry: `apps/server/src/app.ts`.
 - For unexpected failures, return generic messages and log server-side.
 
 ## Testing Conventions
-- Place tests with source (`src/*.test.ts`) for now.
+- Place tests under `tests/` (`tests/api`, `tests/services`, `tests/integration`).
 - Use `describe` blocks per route/module.
 - Assert both status and payload.
 - Add regression tests for bug fixes.

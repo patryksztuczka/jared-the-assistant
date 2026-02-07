@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createApp } from "./app";
-import type { ChatMessageStore } from "./chat/message-store";
-import type { ChatRunStore } from "./chat/run-store";
-import type { EventPublisher } from "./events/types";
+import { createApp } from "../../src/app";
+import type { ChatMessageService } from "../../src/services/chat/message-service";
+import type { ChatRunService } from "../../src/services/chat/run-service";
+import type { EventPublisher } from "../../src/events/types";
 
 const createPublisherSpy = () => {
   const publisher: EventPublisher = {
@@ -14,7 +14,7 @@ const createPublisherSpy = () => {
   return { publisher };
 };
 
-const createMessageStore = (): ChatMessageStore => {
+const createMessageService = (): ChatMessageService => {
   return {
     createIncomingMessage: async (input) => {
       return {
@@ -46,8 +46,8 @@ const readJsonIfPresent = async (res: Response) => {
 describe("GET /api/chat/runs/:runId", () => {
   test("returns run state for existing run id", async () => {
     const { publisher } = createPublisherSpy();
-    const messageStore = createMessageStore();
-    const runStore: ChatRunStore = {
+    const messageService = createMessageService();
+    const runService: ChatRunService = {
       createQueuedRun: async () => {
         throw new Error("createQueuedRun should not be called");
       },
@@ -71,7 +71,7 @@ describe("GET /api/chat/runs/:runId", () => {
       },
     };
 
-    const app = createApp({ publisher, messageStore, runStore });
+    const app = createApp({ publisher, messageService, runService });
 
     const res = await app.request("/api/chat/runs/run_abcdefghijklmnopqrstuvwx");
     const body = (await readJsonIfPresent(res)) as
@@ -104,8 +104,8 @@ describe("GET /api/chat/runs/:runId", () => {
 
   test("returns 404 when run does not exist", async () => {
     const { publisher } = createPublisherSpy();
-    const messageStore = createMessageStore();
-    const runStore: ChatRunStore = {
+    const messageService = createMessageService();
+    const runService: ChatRunService = {
       createQueuedRun: async () => {
         throw new Error("createQueuedRun should not be called");
       },
@@ -117,7 +117,7 @@ describe("GET /api/chat/runs/:runId", () => {
       },
     };
 
-    const app = createApp({ publisher, messageStore, runStore });
+    const app = createApp({ publisher, messageService, runService });
 
     const res = await app.request("/api/chat/runs/run_abcdefghijklmnopqrstuvwx");
     const body = (await readJsonIfPresent(res)) as { ok: boolean; error: string } | undefined;
@@ -129,8 +129,8 @@ describe("GET /api/chat/runs/:runId", () => {
 
   test("returns 400 for invalid run id format", async () => {
     const { publisher } = createPublisherSpy();
-    const messageStore = createMessageStore();
-    const runStore: ChatRunStore = {
+    const messageService = createMessageService();
+    const runService: ChatRunService = {
       createQueuedRun: async () => {
         throw new Error("createQueuedRun should not be called");
       },
@@ -142,7 +142,7 @@ describe("GET /api/chat/runs/:runId", () => {
       },
     };
 
-    const app = createApp({ publisher, messageStore, runStore });
+    const app = createApp({ publisher, messageService, runService });
 
     const res = await app.request("/api/chat/runs/not-a-run-id");
     const body = (await readJsonIfPresent(res)) as { ok: boolean; error: string } | undefined;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createApp } from "./app";
-import type { EventPublisher } from "./events/types";
+import { createApp } from "../../src/app";
+import type { EventPublisher } from "../../src/events/types";
 
 const createPublisherSpy = () => {
   const publisher: EventPublisher = {

@@ -1,6 +1,6 @@
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { asc, eq } from "drizzle-orm";
-import { messages, threads, type Schema } from "../../db/schema";
+import { messages, threads, type Schema } from "../../../db/schema";
 
 interface CreateIncomingMessageInput {
   threadId: string;
@@ -28,13 +28,13 @@ export interface ChatHistoryMessage {
   createdAt: string;
 }
 
-export interface ChatMessageStore {
+export interface ChatMessageService {
   createIncomingMessage(input: CreateIncomingMessageInput): Promise<PersistedMessage>;
   createAssistantMessage(input: CreateAssistantMessageInput): Promise<PersistedMessage>;
   listMessagesByThreadId(threadId: string): Promise<ChatHistoryMessage[]>;
 }
 
-export const createDrizzleChatMessageStore = (database: LibSQLDatabase<Schema>) => {
+export const createDrizzleChatMessageService = (database: LibSQLDatabase<Schema>) => {
   const createIncomingMessage = async (input: CreateIncomingMessageInput) => {
     await database
       .insert(threads)
@@ -117,10 +117,10 @@ export const createDrizzleChatMessageStore = (database: LibSQLDatabase<Schema>) 
     createIncomingMessage,
     createAssistantMessage,
     listMessagesByThreadId,
-  } satisfies ChatMessageStore;
+  } satisfies ChatMessageService;
 };
 
-export const createInMemoryChatMessageStore = () => {
+export const createInMemoryChatMessageService = () => {
   const records = new Map<string, ChatHistoryMessage>();
 
   const createIncomingMessage = async (input: CreateIncomingMessageInput) => {

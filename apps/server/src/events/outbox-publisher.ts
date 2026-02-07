@@ -1,22 +1,22 @@
 import type { EventPublisher } from "./types";
-import type { OutboxStore } from "./outbox-store";
+import type { OutboxService } from "../services/events/outbox-service";
 
 interface OutboxPublisherOptions {
-  outboxStore: OutboxStore;
+  outboxService: OutboxService;
   publisher: EventPublisher;
   batchSize?: number;
   logger?: Pick<Console, "info" | "error">;
 }
 
 export class OutboxPublisher {
-  private readonly outboxStore: OutboxStore;
+  private readonly outboxService: OutboxService;
   private readonly publisher: EventPublisher;
   private readonly batchSize: number;
   private readonly logger: Pick<Console, "info" | "error">;
   private isRunning = false;
 
   public constructor(options: OutboxPublisherOptions) {
-    this.outboxStore = options.outboxStore;
+    this.outboxService = options.outboxService;
     this.publisher = options.publisher;
     this.batchSize = options.batchSize ?? 10;
     this.logger = options.logger ?? console;
@@ -36,7 +36,7 @@ export class OutboxPublisher {
   }
 
   public async processOnce() {
-    const events = await this.outboxStore.listRetryableEvents(this.batchSize);
+    const events = await this.outboxService.listRetryableEvents(this.batchSize);
     if (events.length === 0) {
       return 0;
     }
@@ -44,7 +44,7 @@ export class OutboxPublisher {
     for (const outboxEvent of events) {
       try {
         await this.publisher.publish(outboxEvent.event);
-        await this.outboxStore.markPublished(outboxEvent.id);
+        await this.outboxService.markPublished(outboxEvent.id);
 
         this.logger.info("outbox.publish.success", {
           eventId: outboxEvent.id,
@@ -52,7 +52,7 @@ export class OutboxPublisher {
         });
       } catch (error) {
         const safeMessage = error instanceof Error ? error.message : "unknown";
-        await this.outboxStore.markPublishFailed(outboxEvent.id, safeMessage);
+        await this.outboxService.markPublishFailed(outboxEvent.id, safeMessage);
 
         this.logger.error("outbox.publish.failed", {
           eventId: outboxEvent.id,

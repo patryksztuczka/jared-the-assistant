@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createApp } from "./app";
-import type { ChatMessageStore } from "./chat/message-store";
-import type { ChatRunStore } from "./chat/run-store";
-import { EVENT_TYPE, type AgentEvent, type EventPublisher } from "./events/types";
+import { createApp } from "../../src/app";
+import type { ChatMessageService } from "../../src/services/chat/message-service";
+import type { ChatRunService } from "../../src/services/chat/run-service";
+import { EVENT_TYPE, type AgentEvent, type EventPublisher } from "../../src/events/types";
 
 const createPublisherSpy = () => {
   const publishedEvents: AgentEvent[] = [];
@@ -20,7 +20,7 @@ const createPublisherSpy = () => {
 
 const createStoreSpy = () => {
   const calls: Array<{ threadId: string; content: string; correlationId: string }> = [];
-  const store: ChatMessageStore = {
+  const messageService: ChatMessageService = {
     createIncomingMessage: async (input) => {
       calls.push(input);
       return {
@@ -40,14 +40,14 @@ const createStoreSpy = () => {
   };
 
   return {
-    store,
+    messageService,
     calls,
   };
 };
 
-const createRunStoreSpy = () => {
+const createRunServiceSpy = () => {
   const createQueuedRunCalls: Array<{ id: string; threadId: string; correlationId: string }> = [];
-  const runStore: ChatRunStore = {
+  const runService: ChatRunService = {
     createQueuedRun: async (input) => {
       createQueuedRunCalls.push(input);
 
@@ -70,7 +70,7 @@ const createRunStoreSpy = () => {
   };
 
   return {
-    runStore,
+    runService,
     createQueuedRunCalls,
   };
 };
@@ -88,8 +88,8 @@ describe("POST /api/chat/messages", () => {
   test("persists user message before publishing runtime event", async () => {
     const callOrder: string[] = [];
     const { publishedEvents } = createPublisherSpy();
-    const { store, calls } = createStoreSpy();
-    const { runStore, createQueuedRunCalls } = createRunStoreSpy();
+    const { messageService, calls } = createStoreSpy();
+    const { runService, createQueuedRunCalls } = createRunServiceSpy();
 
     const publisher: EventPublisher = {
       publish: async (event) => {
@@ -100,17 +100,17 @@ describe("POST /api/chat/messages", () => {
 
     const app = createApp({
       publisher,
-      runStore,
-      messageStore: {
+      runService,
+      messageService: {
         createIncomingMessage: async (input) => {
           callOrder.push("store");
-          return store.createIncomingMessage(input);
+          return messageService.createIncomingMessage(input);
         },
         createAssistantMessage: async (input) => {
-          return store.createAssistantMessage(input);
+          return messageService.createAssistantMessage(input);
         },
         listMessagesByThreadId: async (threadId) => {
-          return store.listMessagesByThreadId(threadId);
+          return messageService.listMessagesByThreadId(threadId);
         },
       },
     });
@@ -174,13 +174,13 @@ describe("POST /api/chat/messages", () => {
 
   test("rejects invalid payload and does not persist nor publish", async () => {
     const { publisher, publishedEvents } = createPublisherSpy();
-    const { store, calls } = createStoreSpy();
-    const { runStore, createQueuedRunCalls } = createRunStoreSpy();
+    const { messageService, calls } = createStoreSpy();
+    const { runService, createQueuedRunCalls } = createRunServiceSpy();
 
     const app = createApp({
       publisher,
-      runStore,
-      messageStore: store,
+      runService,
+      messageService,
     });
 
     const res = await app.request("/api/chat/messages", {
@@ -207,13 +207,13 @@ describe("POST /api/chat/messages", () => {
 
   test("rejects missing content and does not persist nor publish", async () => {
     const { publisher, publishedEvents } = createPublisherSpy();
-    const { store, calls } = createStoreSpy();
-    const { runStore, createQueuedRunCalls } = createRunStoreSpy();
+    const { messageService, calls } = createStoreSpy();
+    const { runService, createQueuedRunCalls } = createRunServiceSpy();
 
     const app = createApp({
       publisher,
-      runStore,
-      messageStore: store,
+      runService,
+      messageService,
     });
 
     const res = await app.request("/api/chat/messages", {

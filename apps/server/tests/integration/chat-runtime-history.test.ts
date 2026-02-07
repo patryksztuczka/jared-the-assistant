@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { createApp } from "./app";
-import { createInMemoryChatMessageStore, type ChatHistoryMessage } from "./chat/message-store";
-import { createInMemoryChatRunStore } from "./chat/run-store";
-import { AgentRuntime, type RuntimeEventBus } from "./runtime/agent-runtime";
-import type { AgentEvent } from "./events/types";
+import { createApp } from "../../src/app";
+import {
+  createInMemoryChatMessageService,
+  type ChatHistoryMessage,
+} from "../../src/services/chat/message-service";
+import { createInMemoryChatRunService } from "../../src/services/chat/run-service";
+import { AgentRuntime, type RuntimeEventBus } from "../../src/runtime/agent-runtime";
+import type { AgentEvent } from "../../src/events/types";
 
 class InMemoryRuntimeBus implements RuntimeEventBus {
   public readonly queuedEntries: Array<{ streamEntryId: string; event: AgentEvent }> = [];
@@ -43,17 +46,17 @@ const readJsonIfPresent = async (res: Response) => {
 describe("chat ingress + runtime + history", () => {
   test("returns both user and assistant messages after runtime processing", async () => {
     const bus = new InMemoryRuntimeBus();
-    const messageStore = createInMemoryChatMessageStore();
-    const runStore = createInMemoryChatRunStore();
+    const messageService = createInMemoryChatMessageService();
+    const runService = createInMemoryChatRunService();
     const app = createApp({
       publisher: bus,
-      messageStore,
-      runStore,
+      messageService,
+      runService,
     });
     const runtime = new AgentRuntime({
       bus,
-      messageStore,
-      runStore,
+      messageService,
+      runService,
       consumerGroup: "group_history_e2e",
       consumerName: "consumer_history_e2e",
       logger: { info: () => {}, error: () => {} },

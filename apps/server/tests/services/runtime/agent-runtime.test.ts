@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { EVENT_TYPE, type AgentEvent } from "../events/types";
-import type { ChatMessageStore } from "../chat/message-store";
-import type { ChatRunStore, RunStatus } from "../chat/run-store";
-import { AgentRuntime, type RuntimeEventBus } from "./agent-runtime";
+import { EVENT_TYPE, type AgentEvent } from "../../../src/events/types";
+import type { ChatMessageService } from "../../../src/services/chat/message-service";
+import type { ChatRunService, RunStatus } from "../../../src/services/chat/run-service";
+import { AgentRuntime, type RuntimeEventBus } from "../../../src/runtime/agent-runtime";
 
 class FakeRuntimeBus implements RuntimeEventBus {
   public readonly published: AgentEvent[] = [];
@@ -47,7 +47,7 @@ describe("AgentRuntime", () => {
     });
 
     const statuses: RunStatus[] = [];
-    const runStore: ChatRunStore = {
+    const runService: ChatRunService = {
       createQueuedRun: async () => {
         throw new Error("createQueuedRun should not be called in runtime test");
       },
@@ -71,7 +71,7 @@ describe("AgentRuntime", () => {
 
     const runtime = new AgentRuntime({
       bus,
-      runStore,
+      runService,
       consumerGroup: "group_run_success",
       consumerName: "consumer_run_success",
       logger: { info: () => {}, error: () => {} },
@@ -102,7 +102,7 @@ describe("AgentRuntime", () => {
     });
 
     const statusUpdates: Array<{ status: RunStatus; safeError?: string }> = [];
-    const runStore: ChatRunStore = {
+    const runService: ChatRunService = {
       createQueuedRun: async () => {
         throw new Error("createQueuedRun should not be called in runtime test");
       },
@@ -129,7 +129,7 @@ describe("AgentRuntime", () => {
 
     const runtime = new AgentRuntime({
       bus,
-      runStore,
+      runService,
       consumerGroup: "group_run_fail",
       consumerName: "consumer_run_fail",
       logger: { info: () => {}, error: () => {} },
@@ -173,7 +173,7 @@ describe("AgentRuntime", () => {
       correlationId: string;
     }> = [];
 
-    const messageStore: ChatMessageStore = {
+    const messageService: ChatMessageService = {
       createIncomingMessage: async (input) => {
         return {
           messageId: `msg_incoming_${input.correlationId}`,
@@ -195,7 +195,7 @@ describe("AgentRuntime", () => {
 
     const runtime = new AgentRuntime({
       bus,
-      messageStore,
+      messageService,
       consumerGroup: "group_persist",
       consumerName: "consumer_persist",
       logger: { info: () => {}, error: () => {} },
