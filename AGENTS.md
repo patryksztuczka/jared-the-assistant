@@ -96,6 +96,7 @@ Important settings:
 Agent expectations:
 - Avoid `any`; prefer `unknown` + narrowing.
 - Use explicit types at module boundaries.
+- Do not add explicit return types on function implementations; rely on TypeScript inference unless a type predicate or overload requires an explicit annotation.
 - Validate external/untrusted inputs.
 - Keep return shapes predictable and stable.
 

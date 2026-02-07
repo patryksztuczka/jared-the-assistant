@@ -1,10 +1,68 @@
-import { app } from "./app";
+import Redis from "ioredis";
+import { createApp } from "./app";
+import { createDrizzleChatMessageStore } from "./chat/message-store";
+import { RedisStreamBus } from "./events/redis-stream";
+import { AgentRuntime } from "./runtime/agent-runtime";
+import { db } from "../db";
 
 const port = Number(process.env.PORT ?? 3000);
+const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+const redisStreamKey = process.env.REDIS_STREAM_KEY ?? "agent_events";
+const redisConsumerGroup = process.env.REDIS_CONSUMER_GROUP ?? "agent_runtime";
+const redisConsumerName = process.env.REDIS_CONSUMER_NAME ?? `worker-${process.pid}`;
 
-Bun.serve({
+const redis = new Redis(redisUrl);
+const bus = new RedisStreamBus(redis, {
+  streamKey: redisStreamKey,
+});
+const runtime = new AgentRuntime({
+  bus,
+  consumerGroup: redisConsumerGroup,
+  consumerName: redisConsumerName,
+});
+const messageStore = createDrizzleChatMessageStore(db);
+
+await runtime.init();
+runtime.start();
+
+const app = createApp({ publisher: bus, messageStore });
+
+const server = Bun.serve({
   port,
   fetch: app.fetch,
 });
 
 console.log(`Server listening on http://localhost:${port}`);
+
+let isShuttingDown = false;
+
+const shutdown = async (signal: NodeJS.Signals) => {
+  if (isShuttingDown) {
+    return;
+  }
+
+  isShuttingDown = true;
+  console.log(`Received ${signal}, shutting down...`);
+
+  runtime.stop();
+
+  try {
+    server.stop(true);
+  } catch {
+    // no-op
+  }
+
+  try {
+    await redis.quit();
+  } catch {
+    // no-op
+  }
+};
+
+process.on("SIGINT", () => {
+  void shutdown("SIGINT");
+});
+
+process.on("SIGTERM", () => {
+  void shutdown("SIGTERM");
+});

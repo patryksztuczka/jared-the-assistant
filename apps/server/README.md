@@ -12,10 +12,28 @@ To run in watch mode:
 bun run dev
 ```
 
+The server expects Redis for event streaming. Start Redis first:
+
+```bash
+bun run redis:up
+```
+
+Stop Redis when done:
+
+```bash
+bun run redis:down
+```
+
 To run tests:
 
 ```bash
 bun run test
+```
+
+To run Redis integration tests (requires Redis running):
+
+```bash
+RUN_REDIS_TESTS=true bun run test
 ```
 
 To run tests in watch mode:
@@ -53,6 +71,41 @@ To verify formatting:
 ```bash
 bun run format
 ```
+
+## Event-driven runtime
+
+`POST /api/agent` accepts direct runtime work and publishes `agent.run.requested` to a Redis Stream.
+`POST /api/chat/messages` persists an incoming user chat message, then publishes `agent.run.requested`.
+
+For chat ingress, `threadId` is optional. If omitted, the API generates a safe Cuid2-based id in
+the form `thr_<24 lowercase alphanumerics>` and returns it in the response.
+The runtime consumes those events and emits either:
+
+- `agent.run.completed`
+- `agent.run.failed`
+
+Request example:
+
+```bash
+curl -X POST http://localhost:3000/api/agent \
+  -H "content-type: application/json" \
+  -d '{"prompt":"Summarize current state"}'
+```
+
+Chat ingress example:
+
+```bash
+curl -X POST http://localhost:3000/api/chat/messages \
+  -H "content-type: application/json" \
+  -d '{"content":"Summarize current state"}'
+```
+
+Optional environment variables:
+
+- `REDIS_URL` (default `redis://localhost:6379`)
+- `REDIS_STREAM_KEY` (default `agent_events`)
+- `REDIS_CONSUMER_GROUP` (default `agent_runtime`)
+- `REDIS_CONSUMER_NAME` (default `worker-<pid>`)
 
 ## Database (Drizzle ORM + SQLite)
 
