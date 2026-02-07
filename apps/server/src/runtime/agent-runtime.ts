@@ -1,5 +1,6 @@
 import { EVENT_TYPE, type AgentEvent, type AgentRunRequestedPayload } from "../events/types";
 import type { StreamEntry } from "../events/redis-stream";
+import type { ChatMessageStore } from "../chat/message-store";
 
 export interface RuntimeEventBus {
   publish(event: AgentEvent): Promise<void>;
@@ -16,6 +17,7 @@ const GENERIC_RUNTIME_ERROR_MESSAGE = "Agent runtime failed to process the reque
 
 interface AgentRuntimeOptions {
   bus: RuntimeEventBus;
+  messageStore?: ChatMessageStore;
   consumerGroup: string;
   consumerName: string;
   logger?: Pick<Console, "info" | "error">;
@@ -23,6 +25,7 @@ interface AgentRuntimeOptions {
 
 export class AgentRuntime {
   private readonly bus: RuntimeEventBus;
+  private readonly messageStore?: ChatMessageStore;
   private readonly consumerGroup: string;
   private readonly consumerName: string;
   private readonly logger: Pick<Console, "info" | "error">;
@@ -30,6 +33,7 @@ export class AgentRuntime {
 
   public constructor(options: AgentRuntimeOptions) {
     this.bus = options.bus;
+    this.messageStore = options.messageStore;
     this.consumerGroup = options.consumerGroup;
     this.consumerName = options.consumerName;
     this.logger = options.logger ?? console;
@@ -87,6 +91,7 @@ export class AgentRuntime {
 
     try {
       const completedEvent = this.buildCompletedEvent(requestedEvent);
+      await this.persistAssistantMessage(requestedEvent, completedEvent.payload.output);
       await this.bus.publish(completedEvent);
 
       this.logger.info("runtime.event.processed", {
@@ -122,6 +127,23 @@ export class AgentRuntime {
         output: `Handled prompt: ${payload.prompt}`,
       },
     };
+  }
+
+  private async persistAssistantMessage(
+    event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>,
+    output: string,
+  ) {
+    if (!this.messageStore) {
+      return;
+    }
+
+    const payload = event.payload as AgentRunRequestedPayload;
+
+    await this.messageStore.createAssistantMessage({
+      threadId: payload.threadId,
+      content: output,
+      correlationId: event.correlationId,
+    });
   }
 
   private buildFailedEvent(event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>) {

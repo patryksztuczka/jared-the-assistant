@@ -48,6 +48,12 @@ describe("GET /api/chat/threads/:threadId/messages", () => {
           threadId: input.threadId,
         };
       },
+      createAssistantMessage: async (input) => {
+        return {
+          messageId: `msg_assistant_${input.correlationId}`,
+          threadId: input.threadId,
+        };
+      },
       listMessagesByThreadId: async (threadId) => {
         listCalls.push(threadId);
         return [
@@ -123,6 +129,12 @@ describe("GET /api/chat/threads/:threadId/messages", () => {
           threadId: input.threadId,
         };
       },
+      createAssistantMessage: async (input) => {
+        return {
+          messageId: `msg_assistant_${input.correlationId}`,
+          threadId: input.threadId,
+        };
+      },
       listMessagesByThreadId: async () => {
         return [];
       },
@@ -154,6 +166,12 @@ describe("GET /api/chat/threads/:threadId/messages", () => {
       createIncomingMessage: async (input) => {
         return {
           messageId: `msg_${input.correlationId}`,
+          threadId: input.threadId,
+        };
+      },
+      createAssistantMessage: async (input) => {
+        return {
+          messageId: `msg_assistant_${input.correlationId}`,
           threadId: input.threadId,
         };
       },
