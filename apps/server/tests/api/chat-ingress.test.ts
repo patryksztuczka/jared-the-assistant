@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "../../src/app";
+import { createEnvironmentChatModelCatalogService } from "../../src/services/chat/model-catalog-service";
 import type { ChatMessageService } from "../../src/services/chat/message-service";
 import type { ChatRunService } from "../../src/services/chat/run-service";
 import { EVENT_TYPE, type AgentEvent, type EventPublisher } from "../../src/events/types";
@@ -181,6 +182,9 @@ describe("POST /api/chat/messages", () => {
       publisher,
       runService,
       messageService,
+      modelCatalogService: createEnvironmentChatModelCatalogService({
+        CHAT_ALLOWED_MODELS: "gpt-4o-mini,gpt-4.1-mini",
+      }),
     });
 
     const res = await app.request("/api/chat/messages", {
@@ -214,6 +218,9 @@ describe("POST /api/chat/messages", () => {
       publisher,
       runService,
       messageService,
+      modelCatalogService: createEnvironmentChatModelCatalogService({
+        CHAT_ALLOWED_MODELS: "gpt-4o-mini,gpt-4.1-mini",
+      }),
     });
 
     const res = await app.request("/api/chat/messages", {
@@ -232,6 +239,43 @@ describe("POST /api/chat/messages", () => {
     expect(body).toBeDefined();
     expect(body?.ok).toBe(false);
     expect(typeof body?.error).toBe("string");
+    expect(calls).toHaveLength(0);
+    expect(createQueuedRunCalls).toHaveLength(0);
+    expect(publishedEvents).toHaveLength(0);
+  });
+
+  test("rejects unsupported model and does not persist nor publish", async () => {
+    const { publisher, publishedEvents } = createPublisherSpy();
+    const { messageService, calls } = createStoreSpy();
+    const { runService, createQueuedRunCalls } = createRunServiceSpy();
+
+    const app = createApp({
+      publisher,
+      runService,
+      messageService,
+      modelCatalogService: createEnvironmentChatModelCatalogService({
+        CHAT_ALLOWED_MODELS: "gpt-4o-mini,gpt-4.1-mini",
+      }),
+    });
+
+    const res = await app.request("/api/chat/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        content: "Implement this API",
+        model: "unsupported-model",
+      }),
+    });
+
+    const body = (await readJsonIfPresent(res)) as { ok: boolean; error: string } | undefined;
+
+    expect(res.status).toBe(400);
+    expect(body).toBeDefined();
+    expect(body?.ok).toBe(false);
+    expect(typeof body?.error).toBe("string");
+    expect(body?.error).toContain("Unsupported model");
     expect(calls).toHaveLength(0);
     expect(createQueuedRunCalls).toHaveLength(0);
     expect(publishedEvents).toHaveLength(0);

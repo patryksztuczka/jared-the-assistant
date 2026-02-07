@@ -13,6 +13,7 @@ const createRequestedEvent = (id: string): AgentEvent<typeof EVENT_TYPE.AGENT_RU
       runId: `run_${id}`,
       threadId: "thr_abcdefghijklmnopqrstuvwx",
       prompt: "hello",
+      model: "gpt-4o-mini",
     },
   };
 };

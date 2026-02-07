@@ -3,6 +3,8 @@ import { createApp } from "./app";
 import { createDrizzleChatIngressService } from "./services/chat/ingress-service";
 import { createDrizzleChatMessageService } from "./services/chat/message-service";
 import { createDrizzleChatRunService } from "./services/chat/run-service";
+import { createAiSdkChatLlmService } from "./services/chat/llm-service";
+import { createEnvironmentChatModelCatalogService } from "./services/chat/model-catalog-service";
 import { OutboxPublisher } from "./events/outbox-publisher";
 import { createDrizzleOutboxService } from "./services/events/outbox-service";
 import { RedisStreamBus } from "./events/redis-stream";
@@ -14,11 +16,15 @@ const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 const redisStreamKey = process.env.REDIS_STREAM_KEY ?? "agent_events";
 const redisConsumerGroup = process.env.REDIS_CONSUMER_GROUP ?? "agent_runtime";
 const redisConsumerName = process.env.REDIS_CONSUMER_NAME ?? `worker-${process.pid}`;
+const memoryRecentMessageCount = Number(process.env.CHAT_MEMORY_RECENT_MESSAGES ?? 8);
+const summaryModelFromEnvironment = process.env.CHAT_SUMMARY_MODEL?.trim();
 
 const redis = new Redis(redisUrl);
 const bus = new RedisStreamBus(redis, {
   streamKey: redisStreamKey,
 });
+const modelCatalogService = createEnvironmentChatModelCatalogService();
+const llmService = createAiSdkChatLlmService();
 const messageService = createDrizzleChatMessageService(db);
 const runService = createDrizzleChatRunService(db);
 const ingressService = createDrizzleChatIngressService(db);
@@ -31,15 +37,24 @@ const runtime = new AgentRuntime({
   bus,
   messageService,
   runService,
+  chatLlmService: llmService,
   consumerGroup: redisConsumerGroup,
   consumerName: redisConsumerName,
+  defaultModel: modelCatalogService.getDefaultModel(),
+  summaryModel: summaryModelFromEnvironment,
+  memoryRecentMessageCount,
 });
 
 await runtime.init();
 runtime.start();
 outboxPublisher.start();
 
-const app = createApp({ ingressService, messageService, runService });
+const app = createApp({
+  ingressService,
+  messageService,
+  runService,
+  modelCatalogService,
+});
 
 const server = Bun.serve({
   port,
