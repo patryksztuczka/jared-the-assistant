@@ -54,4 +54,40 @@ To verify formatting:
 bun run format
 ```
 
+## Database (Drizzle ORM + SQLite)
+
+This project is configured with Drizzle ORM and Drizzle Kit.
+
+By default, the SQLite database file is local:
+
+```bash
+file:./db/sqlite.db
+```
+
+You can override this with `DATABASE_URL`.
+
+Generate migrations from schema changes:
+
+```bash
+bun run db:generate
+```
+
+Apply migrations:
+
+```bash
+bun run db:migrate
+```
+
+Open Drizzle Studio:
+
+```bash
+bun run db:studio
+```
+
+Check migration drift:
+
+```bash
+bun run db:check
+```
+
 This project was created using `bun init` in bun v1.3.3. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.

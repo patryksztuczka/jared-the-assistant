@@ -11,14 +11,21 @@
     "lint:fix": "eslint . --fix",
     "check-types": "tsc --noEmit",
     "format:write": "prettier --write .",
-    "format": "prettier --check ."
+    "format": "prettier --check .",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "db:check": "drizzle-kit check"
   },
   "dependencies": {
+    "@libsql/client": "^0.15.15",
+    "drizzle-orm": "^0.44.7",
     "hono": "^4.9.8"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/bun": "latest",
+    "drizzle-kit": "^0.31.5",
     "eslint": "^10.0.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-unicorn": "^62.0.0",
