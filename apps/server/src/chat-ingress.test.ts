@@ -27,6 +27,9 @@ const createStoreSpy = () => {
         threadId: input.threadId,
       };
     },
+    listMessagesByThreadId: async () => {
+      return [];
+    },
   };
 
   return {
@@ -63,6 +66,9 @@ describe("POST /api/chat/messages", () => {
         createIncomingMessage: async (input) => {
           callOrder.push("store");
           return store.createIncomingMessage(input);
+        },
+        listMessagesByThreadId: async (threadId) => {
+          return store.listMessagesByThreadId(threadId);
         },
       },
     });

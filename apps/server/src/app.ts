@@ -1,11 +1,7 @@
 import { Hono } from "hono";
 import { createId } from "@paralleldrive/cuid2";
 import { createInMemoryChatMessageStore, type ChatMessageStore } from "./chat/message-store";
-import {
-  EVENT_TYPE,
-  parseCreateChatMessageRequest,
-  type EventPublisher,
-} from "./events/types";
+import { EVENT_TYPE, parseCreateChatMessageRequest, type EventPublisher } from "./events/types";
 
 interface CreateAppOptions {
   publisher: EventPublisher;
@@ -15,6 +11,7 @@ interface CreateAppOptions {
 export const createApp = (options: CreateAppOptions) => {
   const app = new Hono();
   const messageStore = options.messageStore ?? createInMemoryChatMessageStore();
+  const threadIdPattern = /^thr_[a-z0-9]{24}$/;
 
   app.get("/api", (c) => {
     return c.json({ ok: true, message: "API is running" });
@@ -65,6 +62,26 @@ export const createApp = (options: CreateAppOptions) => {
       },
       202,
     );
+  });
+
+  app.get("/api/chat/threads/:threadId/messages", async (c) => {
+    const threadId = c.req.param("threadId");
+    if (!threadIdPattern.test(threadId)) {
+      return c.json(
+        {
+          ok: false,
+          error: "Invalid threadId. Expected format: thr_<24 lowercase alphanumerics>",
+        },
+        400,
+      );
+    }
+
+    const messages = await messageStore.listMessagesByThreadId(threadId);
+
+    return c.json({
+      ok: true,
+      messages,
+    });
   });
 
   return app;
