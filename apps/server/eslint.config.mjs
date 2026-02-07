@@ -1,0 +1,32 @@
+import { defineConfig } from "eslint/config";
+import js from "@eslint/js";
+import eslintConfigPrettier from "eslint-config-prettier";
+import unicorn from "eslint-plugin-unicorn";
+import globals from "globals";
+import tseslint from "typescript-eslint";
+
+export default defineConfig(
+  {
+    ignores: ["dist", "coverage", "node_modules"],
+  },
+  js.configs.recommended,
+  tseslint.configs.recommended,
+  {
+    files: ["**/*.{js,mjs,ts}"],
+    languageOptions: {
+      globals: {
+        ...globals.bun,
+        ...globals.node,
+      },
+    },
+    plugins: {
+      unicorn,
+    },
+    rules: {
+      ...unicorn.configs.recommended.rules,
+      "unicorn/filename-case": "off",
+      "unicorn/prevent-abbreviations": "off",
+    },
+  },
+  eslintConfigPrettier,
+);
