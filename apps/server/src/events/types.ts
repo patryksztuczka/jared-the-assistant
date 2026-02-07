@@ -41,14 +41,6 @@ export interface EventPublisher {
   publish(event: AgentEvent): Promise<void>;
 }
 
-export const publishEventRequestSchema = z.object({
-  prompt: z.string().trim().min(1),
-  correlationId: z.string().optional(),
-  simulateFailure: z.boolean().optional(),
-});
-
-export type PublishEventRequest = z.infer<typeof publishEventRequestSchema>;
-
 export const createChatMessageRequestSchema = z.object({
   threadId: z
     .string()
@@ -60,15 +52,6 @@ export const createChatMessageRequestSchema = z.object({
 });
 
 export type CreateChatMessageRequest = z.infer<typeof createChatMessageRequestSchema>;
-
-export const parsePublishEventRequest = (value: unknown) => {
-  const parsed = publishEventRequestSchema.safeParse(value);
-  if (!parsed.success) {
-    return;
-  }
-
-  return parsed.data;
-};
 
 export const parseCreateChatMessageRequest = (value: unknown) => {
   const parsed = createChatMessageRequestSchema.safeParse(value);

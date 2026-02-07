@@ -4,7 +4,6 @@ import { createInMemoryChatMessageStore, type ChatMessageStore } from "./chat/me
 import {
   EVENT_TYPE,
   parseCreateChatMessageRequest,
-  parsePublishEventRequest,
   type EventPublisher,
 } from "./events/types";
 
@@ -19,45 +18,6 @@ export const createApp = (options: CreateAppOptions) => {
 
   app.get("/api", (c) => {
     return c.json({ ok: true, message: "API is running" });
-  });
-
-  app.post("/api/agent", async (c) => {
-    const body: unknown = await c.req.json().catch(() => undefined);
-    const request = parsePublishEventRequest(body);
-
-    if (!request) {
-      return c.json(
-        {
-          ok: false,
-          error: "Invalid request body. Expected { prompt: string, correlationId?: string }",
-        },
-        400,
-      );
-    }
-
-    const correlationId = request.correlationId ?? crypto.randomUUID();
-    const eventId = crypto.randomUUID();
-
-    await options.publisher.publish({
-      id: eventId,
-      type: EVENT_TYPE.AGENT_RUN_REQUESTED,
-      timestamp: new Date().toISOString(),
-      correlationId,
-      payload: {
-        prompt: request.prompt,
-        simulateFailure: request.simulateFailure,
-      },
-    });
-
-    return c.json(
-      {
-        ok: true,
-        status: "accepted",
-        eventId,
-        correlationId,
-      },
-      202,
-    );
   });
 
   app.post("/api/chat/messages", async (c) => {

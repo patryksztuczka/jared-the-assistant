@@ -74,7 +74,6 @@ bun run format
 
 ## Event-driven runtime
 
-`POST /api/agent` accepts direct runtime work and publishes `agent.run.requested` to a Redis Stream.
 `POST /api/chat/messages` persists an incoming user chat message, then publishes `agent.run.requested`.
 
 For chat ingress, `threadId` is optional. If omitted, the API generates a safe Cuid2-based id in
@@ -83,14 +82,6 @@ The runtime consumes those events and emits either:
 
 - `agent.run.completed`
 - `agent.run.failed`
-
-Request example:
-
-```bash
-curl -X POST http://localhost:3000/api/agent \
-  -H "content-type: application/json" \
-  -d '{"prompt":"Summarize current state"}'
-```
 
 Chat ingress example:
 
