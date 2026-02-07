@@ -2,10 +2,12 @@ import { Hono } from "hono";
 import { createId } from "@paralleldrive/cuid2";
 import { createInMemoryChatMessageStore, type ChatMessageStore } from "./chat/message-store";
 import { createInMemoryChatRunStore, type ChatRunStore } from "./chat/run-store";
+import type { ChatIngressStore } from "./chat/ingress-store";
 import { EVENT_TYPE, parseCreateChatMessageRequest, type EventPublisher } from "./events/types";
 
 interface CreateAppOptions {
-  publisher: EventPublisher;
+  publisher?: EventPublisher;
+  ingressStore?: ChatIngressStore;
   messageStore?: ChatMessageStore;
   runStore?: ChatRunStore;
 }
@@ -14,6 +16,7 @@ export const createApp = (options: CreateAppOptions) => {
   const app = new Hono();
   const messageStore = options.messageStore ?? createInMemoryChatMessageStore();
   const runStore = options.runStore ?? createInMemoryChatRunStore();
+  const ingressStore = options.ingressStore;
   const threadIdPattern = /^thr_[a-z0-9]{24}$/;
   const runIdPattern = /^run_[a-z0-9]{24}$/;
 
@@ -41,28 +44,43 @@ export const createApp = (options: CreateAppOptions) => {
     const threadId = request.threadId ?? `thr_${createId()}`;
     const runId = `run_${createId()}`;
     const correlationId = request.correlationId ?? crypto.randomUUID();
-    const persistedMessage = await messageStore.createIncomingMessage({
-      threadId,
-      content: request.content,
-      correlationId,
-    });
-    await runStore.createQueuedRun({
-      id: runId,
-      threadId,
-      correlationId,
-    });
 
-    await options.publisher.publish({
-      id: crypto.randomUUID(),
-      type: EVENT_TYPE.AGENT_RUN_REQUESTED,
-      timestamp: new Date().toISOString(),
-      correlationId,
-      payload: {
-        runId,
-        threadId: persistedMessage.threadId,
-        prompt: request.content,
-      },
-    });
+    const persistedMessage = ingressStore
+      ? await ingressStore.createIncomingMessageAndQueueRun({
+          threadId,
+          runId,
+          content: request.content,
+          correlationId,
+        })
+      : await messageStore.createIncomingMessage({
+          threadId,
+          content: request.content,
+          correlationId,
+        });
+
+    if (!ingressStore) {
+      await runStore.createQueuedRun({
+        id: runId,
+        threadId,
+        correlationId,
+      });
+
+      if (!options.publisher) {
+        throw new Error("publisher is required when ingressStore is not configured");
+      }
+
+      await options.publisher.publish({
+        id: crypto.randomUUID(),
+        type: EVENT_TYPE.AGENT_RUN_REQUESTED,
+        timestamp: new Date().toISOString(),
+        correlationId,
+        payload: {
+          runId,
+          threadId: persistedMessage.threadId,
+          prompt: request.content,
+        },
+      });
+    }
 
     return c.json(
       {

@@ -44,9 +44,26 @@ export const runs = sqliteTable("runs", {
     .$defaultFn(() => new Date()),
 });
 
+export const outboxEvents = sqliteTable("outbox_events", {
+  id: text("id").primaryKey(),
+  eventType: text("event_type").notNull(),
+  payload: text("payload").notNull(),
+  status: text("status", { enum: ["pending", "published", "failed"] }).notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  lastError: text("last_error"),
+  publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export type Schema = {
   users: typeof users;
   threads: typeof threads;
   messages: typeof messages;
   runs: typeof runs;
+  outboxEvents: typeof outboxEvents;
 };
