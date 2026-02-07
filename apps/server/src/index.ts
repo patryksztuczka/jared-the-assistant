@@ -1,6 +1,7 @@
 import Redis from "ioredis";
 import { createApp } from "./app";
 import { createDrizzleChatMessageStore } from "./chat/message-store";
+import { createDrizzleChatRunStore } from "./chat/run-store";
 import { RedisStreamBus } from "./events/redis-stream";
 import { AgentRuntime } from "./runtime/agent-runtime";
 import { db } from "../db";
@@ -16,9 +17,11 @@ const bus = new RedisStreamBus(redis, {
   streamKey: redisStreamKey,
 });
 const messageStore = createDrizzleChatMessageStore(db);
+const runStore = createDrizzleChatRunStore(db);
 const runtime = new AgentRuntime({
   bus,
   messageStore,
+  runStore,
   consumerGroup: redisConsumerGroup,
   consumerName: redisConsumerName,
 });
@@ -26,7 +29,7 @@ const runtime = new AgentRuntime({
 await runtime.init();
 runtime.start();
 
-const app = createApp({ publisher: bus, messageStore });
+const app = createApp({ publisher: bus, messageStore, runStore });
 
 const server = Bun.serve({
   port,

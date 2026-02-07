@@ -9,6 +9,7 @@ export const EVENT_TYPE = {
 export type AgentEventType = (typeof EVENT_TYPE)[keyof typeof EVENT_TYPE];
 
 export interface AgentRunRequestedPayload {
+  runId: string;
   threadId: string;
   prompt: string;
   simulateFailure?: boolean;

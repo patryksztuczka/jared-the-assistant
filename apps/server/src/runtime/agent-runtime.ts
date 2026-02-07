@@ -1,6 +1,7 @@
 import { EVENT_TYPE, type AgentEvent, type AgentRunRequestedPayload } from "../events/types";
 import type { StreamEntry } from "../events/redis-stream";
 import type { ChatMessageStore } from "../chat/message-store";
+import type { ChatRunStore, RunStatus } from "../chat/run-store";
 
 export interface RuntimeEventBus {
   publish(event: AgentEvent): Promise<void>;
@@ -18,6 +19,7 @@ const GENERIC_RUNTIME_ERROR_MESSAGE = "Agent runtime failed to process the reque
 interface AgentRuntimeOptions {
   bus: RuntimeEventBus;
   messageStore?: ChatMessageStore;
+  runStore?: ChatRunStore;
   consumerGroup: string;
   consumerName: string;
   logger?: Pick<Console, "info" | "error">;
@@ -26,6 +28,7 @@ interface AgentRuntimeOptions {
 export class AgentRuntime {
   private readonly bus: RuntimeEventBus;
   private readonly messageStore?: ChatMessageStore;
+  private readonly runStore?: ChatRunStore;
   private readonly consumerGroup: string;
   private readonly consumerName: string;
   private readonly logger: Pick<Console, "info" | "error">;
@@ -34,6 +37,7 @@ export class AgentRuntime {
   public constructor(options: AgentRuntimeOptions) {
     this.bus = options.bus;
     this.messageStore = options.messageStore;
+    this.runStore = options.runStore;
     this.consumerGroup = options.consumerGroup;
     this.consumerName = options.consumerName;
     this.logger = options.logger ?? console;
@@ -88,11 +92,14 @@ export class AgentRuntime {
     }
 
     const requestedEvent = event as AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>;
+    const payload = requestedEvent.payload as AgentRunRequestedPayload;
 
     try {
+      await this.updateRunStatus(payload.runId, "processing");
       const completedEvent = this.buildCompletedEvent(requestedEvent);
       await this.persistAssistantMessage(requestedEvent, completedEvent.payload.output);
       await this.bus.publish(completedEvent);
+      await this.updateRunStatus(payload.runId, "completed");
 
       this.logger.info("runtime.event.processed", {
         eventId: event.id,
@@ -101,6 +108,7 @@ export class AgentRuntime {
     } catch {
       const failedEvent = this.buildFailedEvent(requestedEvent);
       await this.bus.publish(failedEvent);
+      await this.updateRunStatus(payload.runId, "failed", GENERIC_RUNTIME_ERROR_MESSAGE);
 
       this.logger.error("runtime.event.failed", {
         eventId: event.id,
@@ -109,6 +117,18 @@ export class AgentRuntime {
     } finally {
       await this.bus.acknowledge(this.consumerGroup, streamEntryId);
     }
+  }
+
+  private async updateRunStatus(runId: string, status: RunStatus, safeError?: string) {
+    if (!this.runStore) {
+      return;
+    }
+
+    await this.runStore.updateRunStatus({
+      runId,
+      status,
+      safeError,
+    });
   }
 
   private buildCompletedEvent(event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>) {

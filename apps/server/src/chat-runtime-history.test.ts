@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "./app";
 import { createInMemoryChatMessageStore, type ChatHistoryMessage } from "./chat/message-store";
+import { createInMemoryChatRunStore } from "./chat/run-store";
 import { AgentRuntime, type RuntimeEventBus } from "./runtime/agent-runtime";
 import type { AgentEvent } from "./events/types";
 
@@ -43,13 +44,16 @@ describe("chat ingress + runtime + history", () => {
   test("returns both user and assistant messages after runtime processing", async () => {
     const bus = new InMemoryRuntimeBus();
     const messageStore = createInMemoryChatMessageStore();
+    const runStore = createInMemoryChatRunStore();
     const app = createApp({
       publisher: bus,
       messageStore,
+      runStore,
     });
     const runtime = new AgentRuntime({
       bus,
       messageStore,
+      runStore,
       consumerGroup: "group_history_e2e",
       consumerName: "consumer_history_e2e",
       logger: { info: () => {}, error: () => {} },
@@ -68,6 +72,7 @@ describe("chat ingress + runtime + history", () => {
     const ingressBody = (await readJsonIfPresent(ingressRes)) as
       | {
           ok: boolean;
+          runId: string;
           threadId: string;
           correlationId: string;
         }
@@ -75,6 +80,7 @@ describe("chat ingress + runtime + history", () => {
 
     expect(ingressRes.status).toBe(202);
     expect(ingressBody?.ok).toBe(true);
+    expect(typeof ingressBody?.runId).toBe("string");
     expect(typeof ingressBody?.threadId).toBe("string");
     expect(typeof ingressBody?.correlationId).toBe("string");
 
@@ -97,5 +103,23 @@ describe("chat ingress + runtime + history", () => {
     expect(historyBody?.messages[1]?.role).toBe("assistant");
     expect(historyBody?.messages[1]?.threadId).toBe(ingressBody?.threadId);
     expect(historyBody?.messages[1]?.correlationId).toBe(ingressBody?.correlationId);
+
+    const runRes = await app.request(`/api/chat/runs/${ingressBody?.runId ?? ""}`);
+    const runBody = (await readJsonIfPresent(runRes)) as
+      | {
+          ok: boolean;
+          run: {
+            threadId: string;
+            correlationId: string;
+            status: string;
+          };
+        }
+      | undefined;
+
+    expect(runRes.status).toBe(200);
+    expect(runBody?.ok).toBe(true);
+    expect(runBody?.run.threadId).toBe(ingressBody?.threadId);
+    expect(runBody?.run.correlationId).toBe(ingressBody?.correlationId);
+    expect(runBody?.run.status).toBe("completed");
   });
 });

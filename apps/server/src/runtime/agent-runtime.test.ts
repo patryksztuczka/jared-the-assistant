@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { EVENT_TYPE, type AgentEvent } from "../events/types";
 import type { ChatMessageStore } from "../chat/message-store";
+import type { ChatRunStore, RunStatus } from "../chat/run-store";
 import { AgentRuntime, type RuntimeEventBus } from "./agent-runtime";
 
 class FakeRuntimeBus implements RuntimeEventBus {
@@ -28,6 +29,127 @@ class FakeRuntimeBus implements RuntimeEventBus {
 }
 
 describe("AgentRuntime", () => {
+  test("sets run status to processing then completed on success", async () => {
+    const bus = new FakeRuntimeBus();
+    bus.queuedEntries.push({
+      streamEntryId: "0-3",
+      event: {
+        id: "evt_req_run_success_1",
+        type: EVENT_TYPE.AGENT_RUN_REQUESTED,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        correlationId: "corr_run_success_1",
+        payload: {
+          runId: "run_success_1",
+          threadId: "thr_abcdefghijklmnopqrstuvwx",
+          prompt: "hello run status",
+        },
+      },
+    });
+
+    const statuses: RunStatus[] = [];
+    const runStore: ChatRunStore = {
+      createQueuedRun: async () => {
+        throw new Error("createQueuedRun should not be called in runtime test");
+      },
+      updateRunStatus: async (input) => {
+        statuses.push(input.status);
+
+        return {
+          id: input.runId,
+          threadId: "thr_abcdefghijklmnopqrstuvwx",
+          correlationId: "corr_run_success_1",
+          status: input.status,
+          safeError: input.safeError,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        };
+      },
+      getRunById: async () => {
+        return undefined;
+      },
+    };
+
+    const runtime = new AgentRuntime({
+      bus,
+      runStore,
+      consumerGroup: "group_run_success",
+      consumerName: "consumer_run_success",
+      logger: { info: () => {}, error: () => {} },
+    });
+
+    const processed = await runtime.processOnce();
+
+    expect(processed).toBe(1);
+    expect(statuses).toEqual(["processing", "completed"]);
+  });
+
+  test("sets run status to processing then failed with safe error", async () => {
+    const bus = new FakeRuntimeBus();
+    bus.queuedEntries.push({
+      streamEntryId: "0-4",
+      event: {
+        id: "evt_req_run_fail_1",
+        type: EVENT_TYPE.AGENT_RUN_REQUESTED,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        correlationId: "corr_run_fail_1",
+        payload: {
+          runId: "run_fail_1",
+          threadId: "thr_abcdefghijklmnopqrstuvwx",
+          prompt: "hello run status fail",
+          simulateFailure: true,
+        },
+      },
+    });
+
+    const statusUpdates: Array<{ status: RunStatus; safeError?: string }> = [];
+    const runStore: ChatRunStore = {
+      createQueuedRun: async () => {
+        throw new Error("createQueuedRun should not be called in runtime test");
+      },
+      updateRunStatus: async (input) => {
+        statusUpdates.push({
+          status: input.status,
+          safeError: input.safeError,
+        });
+
+        return {
+          id: input.runId,
+          threadId: "thr_abcdefghijklmnopqrstuvwx",
+          correlationId: "corr_run_fail_1",
+          status: input.status,
+          safeError: input.safeError,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        };
+      },
+      getRunById: async () => {
+        return undefined;
+      },
+    };
+
+    const runtime = new AgentRuntime({
+      bus,
+      runStore,
+      consumerGroup: "group_run_fail",
+      consumerName: "consumer_run_fail",
+      logger: { info: () => {}, error: () => {} },
+    });
+
+    const processed = await runtime.processOnce();
+
+    expect(processed).toBe(1);
+    expect(statusUpdates).toEqual([
+      {
+        status: "processing",
+        safeError: undefined,
+      },
+      {
+        status: "failed",
+        safeError: "Agent runtime failed to process the request.",
+      },
+    ]);
+  });
+
   test("persists assistant message with thread and correlation from request flow", async () => {
     const bus = new FakeRuntimeBus();
     bus.queuedEntries.push({
@@ -38,6 +160,7 @@ describe("AgentRuntime", () => {
         timestamp: "2026-01-01T00:00:00.000Z",
         correlationId: "corr_persist_1",
         payload: {
+          runId: "run_persist_1",
           threadId: "thr_abcdefghijklmnopqrstuvwx",
           prompt: "hello persistence",
         },
@@ -102,6 +225,7 @@ describe("AgentRuntime", () => {
         timestamp: "2026-01-01T00:00:00.000Z",
         correlationId: "corr_default_1",
         payload: {
+          runId: "run_default_1",
           threadId: "thr_abcdefghijklmnopqrstuvwx",
           prompt: "hello default generator",
         },
@@ -135,6 +259,7 @@ describe("AgentRuntime", () => {
         timestamp: "2026-01-01T00:00:00.000Z",
         correlationId: "corr_1",
         payload: {
+          runId: "run_1",
           threadId: "thr_zyxwvutsrqponmlkjihgfedc",
           prompt: "hello",
         },
@@ -175,6 +300,7 @@ describe("AgentRuntime", () => {
         timestamp: "2026-01-01T00:00:00.000Z",
         correlationId: "corr_2",
         payload: {
+          runId: "run_2",
           threadId: "thr_abcdefghijklmnopqrstuvwx",
           prompt: "hello",
           simulateFailure: true,

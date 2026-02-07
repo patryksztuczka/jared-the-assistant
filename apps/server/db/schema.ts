@@ -26,8 +26,27 @@ export const messages = sqliteTable("messages", {
     .$defaultFn(() => new Date()),
 });
 
+export const runs = sqliteTable("runs", {
+  id: text("id").primaryKey(),
+  threadId: text("thread_id")
+    .notNull()
+    .references(() => threads.id),
+  correlationId: text("correlation_id").notNull(),
+  status: text("status", {
+    enum: ["queued", "processing", "completed", "failed"],
+  }).notNull(),
+  safeError: text("safe_error"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export type Schema = {
   users: typeof users;
   threads: typeof threads;
   messages: typeof messages;
+  runs: typeof runs;
 };

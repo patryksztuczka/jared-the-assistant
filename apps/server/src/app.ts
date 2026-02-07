@@ -1,17 +1,21 @@
 import { Hono } from "hono";
 import { createId } from "@paralleldrive/cuid2";
 import { createInMemoryChatMessageStore, type ChatMessageStore } from "./chat/message-store";
+import { createInMemoryChatRunStore, type ChatRunStore } from "./chat/run-store";
 import { EVENT_TYPE, parseCreateChatMessageRequest, type EventPublisher } from "./events/types";
 
 interface CreateAppOptions {
   publisher: EventPublisher;
   messageStore?: ChatMessageStore;
+  runStore?: ChatRunStore;
 }
 
 export const createApp = (options: CreateAppOptions) => {
   const app = new Hono();
   const messageStore = options.messageStore ?? createInMemoryChatMessageStore();
+  const runStore = options.runStore ?? createInMemoryChatRunStore();
   const threadIdPattern = /^thr_[a-z0-9]{24}$/;
+  const runIdPattern = /^run_[a-z0-9]{24}$/;
 
   app.get("/api", (c) => {
     return c.json({ ok: true, message: "API is running" });
@@ -35,10 +39,16 @@ export const createApp = (options: CreateAppOptions) => {
     }
 
     const threadId = request.threadId ?? `thr_${createId()}`;
+    const runId = `run_${createId()}`;
     const correlationId = request.correlationId ?? crypto.randomUUID();
     const persistedMessage = await messageStore.createIncomingMessage({
       threadId,
       content: request.content,
+      correlationId,
+    });
+    await runStore.createQueuedRun({
+      id: runId,
+      threadId,
       correlationId,
     });
 
@@ -48,6 +58,7 @@ export const createApp = (options: CreateAppOptions) => {
       timestamp: new Date().toISOString(),
       correlationId,
       payload: {
+        runId,
         threadId: persistedMessage.threadId,
         prompt: request.content,
       },
@@ -57,6 +68,7 @@ export const createApp = (options: CreateAppOptions) => {
       {
         ok: true,
         status: "accepted",
+        runId,
         threadId: persistedMessage.threadId,
         messageId: persistedMessage.messageId,
         correlationId,
@@ -82,6 +94,35 @@ export const createApp = (options: CreateAppOptions) => {
     return c.json({
       ok: true,
       messages,
+    });
+  });
+
+  app.get("/api/chat/runs/:runId", async (c) => {
+    const runId = c.req.param("runId");
+    if (!runIdPattern.test(runId)) {
+      return c.json(
+        {
+          ok: false,
+          error: "Invalid runId. Expected format: run_<24 lowercase alphanumerics>",
+        },
+        400,
+      );
+    }
+
+    const run = await runStore.getRunById(runId);
+    if (!run) {
+      return c.json(
+        {
+          ok: false,
+          error: "Run not found",
+        },
+        404,
+      );
+    }
+
+    return c.json({
+      ok: true,
+      run,
     });
   });
 
