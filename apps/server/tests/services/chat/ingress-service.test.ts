@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { eq } from "drizzle-orm";
-import { createDrizzleChatIngressStore } from "./ingress-store";
-import * as schema from "../../db/schema";
-import { messages, outboxEvents, runs } from "../../db/schema";
+import { createDrizzleChatIngressService } from "../../../src/services/chat/ingress-service";
+import * as schema from "../../../db/schema";
+import { messages, outboxEvents, runs } from "../../../db/schema";
 
-describe("createDrizzleChatIngressStore", () => {
+describe("createDrizzleChatIngressService", () => {
   test("inserts message and outbox row atomically in one transaction", async () => {
     const databaseFilePath = `/tmp/jared-ingress-${crypto.randomUUID()}.sqlite`;
     const database = drizzle({
@@ -28,10 +28,10 @@ describe("createDrizzleChatIngressStore", () => {
         status: "pending",
       });
 
-      const ingressStore = createDrizzleChatIngressStore(database);
+      const ingressService = createDrizzleChatIngressService(database);
 
       await expect(
-        ingressStore.createIncomingMessageAndQueueRun({
+        ingressService.createIncomingMessageAndQueueRun({
           threadId: "thr_abcdefghijklmnopqrstuvwx",
           runId: "run_abcdefghijklmnopqrstuvwx",
           content: "hello",

@@ -1,22 +1,25 @@
 import { Hono } from "hono";
 import { createId } from "@paralleldrive/cuid2";
-import { createInMemoryChatMessageStore, type ChatMessageStore } from "./chat/message-store";
-import { createInMemoryChatRunStore, type ChatRunStore } from "./chat/run-store";
-import type { ChatIngressStore } from "./chat/ingress-store";
+import {
+  createInMemoryChatMessageService,
+  type ChatMessageService,
+} from "./services/chat/message-service";
+import { createInMemoryChatRunService, type ChatRunService } from "./services/chat/run-service";
+import type { ChatIngressService } from "./services/chat/ingress-service";
 import { EVENT_TYPE, parseCreateChatMessageRequest, type EventPublisher } from "./events/types";
 
 interface CreateAppOptions {
   publisher?: EventPublisher;
-  ingressStore?: ChatIngressStore;
-  messageStore?: ChatMessageStore;
-  runStore?: ChatRunStore;
+  ingressService?: ChatIngressService;
+  messageService?: ChatMessageService;
+  runService?: ChatRunService;
 }
 
 export const createApp = (options: CreateAppOptions) => {
   const app = new Hono();
-  const messageStore = options.messageStore ?? createInMemoryChatMessageStore();
-  const runStore = options.runStore ?? createInMemoryChatRunStore();
-  const ingressStore = options.ingressStore;
+  const messageService = options.messageService ?? createInMemoryChatMessageService();
+  const runService = options.runService ?? createInMemoryChatRunService();
+  const ingressService = options.ingressService;
   const threadIdPattern = /^thr_[a-z0-9]{24}$/;
   const runIdPattern = /^run_[a-z0-9]{24}$/;
 
@@ -45,28 +48,28 @@ export const createApp = (options: CreateAppOptions) => {
     const runId = `run_${createId()}`;
     const correlationId = request.correlationId ?? crypto.randomUUID();
 
-    const persistedMessage = ingressStore
-      ? await ingressStore.createIncomingMessageAndQueueRun({
+    const persistedMessage = ingressService
+      ? await ingressService.createIncomingMessageAndQueueRun({
           threadId,
           runId,
           content: request.content,
           correlationId,
         })
-      : await messageStore.createIncomingMessage({
+      : await messageService.createIncomingMessage({
           threadId,
           content: request.content,
           correlationId,
         });
 
-    if (!ingressStore) {
-      await runStore.createQueuedRun({
+    if (!ingressService) {
+      await runService.createQueuedRun({
         id: runId,
         threadId,
         correlationId,
       });
 
       if (!options.publisher) {
-        throw new Error("publisher is required when ingressStore is not configured");
+        throw new Error("publisher is required when ingressService is not configured");
       }
 
       await options.publisher.publish({
@@ -107,7 +110,7 @@ export const createApp = (options: CreateAppOptions) => {
       );
     }
 
-    const messages = await messageStore.listMessagesByThreadId(threadId);
+    const messages = await messageService.listMessagesByThreadId(threadId);
 
     return c.json({
       ok: true,
@@ -127,7 +130,7 @@ export const createApp = (options: CreateAppOptions) => {
       );
     }
 
-    const run = await runStore.getRunById(runId);
+    const run = await runService.getRunById(runId);
     if (!run) {
       return c.json(
         {

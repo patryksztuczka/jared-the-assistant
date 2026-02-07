@@ -1,6 +1,6 @@
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
-import { messages, outboxEvents, runs, threads, type Schema } from "../../db/schema";
-import { EVENT_TYPE, type AgentEvent } from "../events/types";
+import { messages, outboxEvents, runs, threads, type Schema } from "../../../db/schema";
+import { EVENT_TYPE, type AgentEvent } from "../../events/types";
 
 interface CreateIncomingMessageAndQueueRunInput {
   threadId: string;
@@ -17,13 +17,13 @@ interface PersistedIngressRecord {
   correlationId: string;
 }
 
-export interface ChatIngressStore {
+export interface ChatIngressService {
   createIncomingMessageAndQueueRun(
     input: CreateIncomingMessageAndQueueRunInput,
   ): Promise<PersistedIngressRecord>;
 }
 
-export const createDrizzleChatIngressStore = (database: LibSQLDatabase<Schema>) => {
+export const createDrizzleChatIngressService = (database: LibSQLDatabase<Schema>) => {
   const createIncomingMessageAndQueueRun = async (input: CreateIncomingMessageAndQueueRunInput) => {
     const messageId = crypto.randomUUID();
     const event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED> = {
@@ -85,10 +85,10 @@ export const createDrizzleChatIngressStore = (database: LibSQLDatabase<Schema>) 
 
   return {
     createIncomingMessageAndQueueRun,
-  } satisfies ChatIngressStore;
+  } satisfies ChatIngressService;
 };
 
-export const createInMemoryChatIngressStore = () => {
+export const createInMemoryChatIngressService = () => {
   const records = new Map<string, PersistedIngressRecord>();
 
   const createIncomingMessageAndQueueRun = async (input: CreateIncomingMessageAndQueueRunInput) => {
@@ -106,5 +106,5 @@ export const createInMemoryChatIngressStore = () => {
 
   return {
     createIncomingMessageAndQueueRun,
-  } satisfies ChatIngressStore;
+  } satisfies ChatIngressService;
 };

@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
-import { runs, threads, type Schema } from "../../db/schema";
+import { runs, threads, type Schema } from "../../../db/schema";
 
 export type RunStatus = "queued" | "processing" | "completed" | "failed";
 
@@ -26,13 +26,13 @@ interface UpdateRunStatusInput {
   safeError?: string;
 }
 
-export interface ChatRunStore {
+export interface ChatRunService {
   createQueuedRun(input: CreateQueuedRunInput): Promise<ChatRun>;
   updateRunStatus(input: UpdateRunStatusInput): Promise<ChatRun | undefined>;
   getRunById(runId: string): Promise<ChatRun | undefined>;
 }
 
-export const createDrizzleChatRunStore = (database: LibSQLDatabase<Schema>) => {
+export const createDrizzleChatRunService = (database: LibSQLDatabase<Schema>) => {
   const createQueuedRun = async (input: CreateQueuedRunInput) => {
     await database
       .insert(threads)
@@ -109,10 +109,10 @@ export const createDrizzleChatRunStore = (database: LibSQLDatabase<Schema>) => {
     createQueuedRun,
     updateRunStatus,
     getRunById,
-  } satisfies ChatRunStore;
+  } satisfies ChatRunService;
 };
 
-export const createInMemoryChatRunStore = () => {
+export const createInMemoryChatRunService = () => {
   const records = new Map<string, ChatRun>();
 
   const createQueuedRun = async (input: CreateQueuedRunInput) => {

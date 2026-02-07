@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { OutboxPublisher } from "./outbox-publisher";
-import { createInMemoryOutboxStore } from "./outbox-store";
-import { EVENT_TYPE, type AgentEvent, type EventPublisher } from "./types";
+import { OutboxPublisher } from "../../../src/events/outbox-publisher";
+import { createInMemoryOutboxService } from "../../../src/services/events/outbox-service";
+import { EVENT_TYPE, type AgentEvent, type EventPublisher } from "../../../src/events/types";
 
 const createRequestedEvent = (id: string): AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED> => {
   return {
@@ -19,7 +19,7 @@ const createRequestedEvent = (id: string): AgentEvent<typeof EVENT_TYPE.AGENT_RU
 
 describe("OutboxPublisher", () => {
   test("publishes pending outbox events and marks them published", async () => {
-    const outboxStore = createInMemoryOutboxStore();
+    const outboxService = createInMemoryOutboxService();
     const publishedEvents: AgentEvent[] = [];
     const publisher: EventPublisher = {
       publish: async (event) => {
@@ -28,10 +28,10 @@ describe("OutboxPublisher", () => {
     };
 
     const event = createRequestedEvent("evt_outbox_1");
-    await outboxStore.createPendingEvent({ event });
+    await outboxService.createPendingEvent({ event });
 
     const worker = new OutboxPublisher({
-      outboxStore,
+      outboxService,
       publisher,
       logger: { info: () => {}, error: () => {} },
     });
@@ -42,7 +42,7 @@ describe("OutboxPublisher", () => {
     expect(publishedEvents).toHaveLength(1);
     expect(publishedEvents[0]).toEqual(event);
 
-    const outboxRecord = outboxStore.getById(event.id);
+    const outboxRecord = outboxService.getById(event.id);
     expect(outboxRecord?.status).toBe("published");
     expect(outboxRecord?.attempts).toBe(0);
     expect(typeof outboxRecord?.publishedAt).toBe("string");
@@ -50,7 +50,7 @@ describe("OutboxPublisher", () => {
   });
 
   test("marks failed publish as retryable and increments attempts", async () => {
-    const outboxStore = createInMemoryOutboxStore();
+    const outboxService = createInMemoryOutboxService();
     const publisher: EventPublisher = {
       publish: async () => {
         throw new Error("redis unavailable");
@@ -58,10 +58,10 @@ describe("OutboxPublisher", () => {
     };
 
     const event = createRequestedEvent("evt_outbox_2");
-    await outboxStore.createPendingEvent({ event });
+    await outboxService.createPendingEvent({ event });
 
     const worker = new OutboxPublisher({
-      outboxStore,
+      outboxService,
       publisher,
       logger: { info: () => {}, error: () => {} },
     });
@@ -69,12 +69,12 @@ describe("OutboxPublisher", () => {
     const processed = await worker.processOnce();
 
     expect(processed).toBe(1);
-    const outboxRecord = outboxStore.getById(event.id);
+    const outboxRecord = outboxService.getById(event.id);
     expect(outboxRecord?.status).toBe("failed");
     expect(outboxRecord?.attempts).toBe(1);
     expect(outboxRecord?.lastError).toBe("redis unavailable");
 
-    const retryableEvents = await outboxStore.listRetryableEvents(10);
+    const retryableEvents = await outboxService.listRetryableEvents(10);
     expect(retryableEvents.map((record) => record.id)).toContain(event.id);
   });
 });

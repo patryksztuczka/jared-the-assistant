@@ -1,7 +1,7 @@
 import { EVENT_TYPE, type AgentEvent, type AgentRunRequestedPayload } from "../events/types";
 import type { StreamEntry } from "../events/redis-stream";
-import type { ChatMessageStore } from "../chat/message-store";
-import type { ChatRunStore, RunStatus } from "../chat/run-store";
+import type { ChatMessageService } from "../services/chat/message-service";
+import type { ChatRunService, RunStatus } from "../services/chat/run-service";
 
 export interface RuntimeEventBus {
   publish(event: AgentEvent): Promise<void>;
@@ -18,8 +18,8 @@ const GENERIC_RUNTIME_ERROR_MESSAGE = "Agent runtime failed to process the reque
 
 interface AgentRuntimeOptions {
   bus: RuntimeEventBus;
-  messageStore?: ChatMessageStore;
-  runStore?: ChatRunStore;
+  messageService?: ChatMessageService;
+  runService?: ChatRunService;
   consumerGroup: string;
   consumerName: string;
   logger?: Pick<Console, "info" | "error">;
@@ -27,8 +27,8 @@ interface AgentRuntimeOptions {
 
 export class AgentRuntime {
   private readonly bus: RuntimeEventBus;
-  private readonly messageStore?: ChatMessageStore;
-  private readonly runStore?: ChatRunStore;
+  private readonly messageService?: ChatMessageService;
+  private readonly runService?: ChatRunService;
   private readonly consumerGroup: string;
   private readonly consumerName: string;
   private readonly logger: Pick<Console, "info" | "error">;
@@ -36,8 +36,8 @@ export class AgentRuntime {
 
   public constructor(options: AgentRuntimeOptions) {
     this.bus = options.bus;
-    this.messageStore = options.messageStore;
-    this.runStore = options.runStore;
+    this.messageService = options.messageService;
+    this.runService = options.runService;
     this.consumerGroup = options.consumerGroup;
     this.consumerName = options.consumerName;
     this.logger = options.logger ?? console;
@@ -120,11 +120,11 @@ export class AgentRuntime {
   }
 
   private async updateRunStatus(runId: string, status: RunStatus, safeError?: string) {
-    if (!this.runStore) {
+    if (!this.runService) {
       return;
     }
 
-    await this.runStore.updateRunStatus({
+    await this.runService.updateRunStatus({
       runId,
       status,
       safeError,
@@ -153,13 +153,13 @@ export class AgentRuntime {
     event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>,
     output: string,
   ) {
-    if (!this.messageStore) {
+    if (!this.messageService) {
       return;
     }
 
     const payload = event.payload as AgentRunRequestedPayload;
 
-    await this.messageStore.createAssistantMessage({
+    await this.messageService.createAssistantMessage({
       threadId: payload.threadId,
       content: output,
       correlationId: event.correlationId,

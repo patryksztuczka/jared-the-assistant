@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { createApp } from "./app";
-import type { ChatMessageStore } from "./chat/message-store";
-import type { EventPublisher } from "./events/types";
+import { createApp } from "../../src/app";
+import type { ChatMessageService } from "../../src/services/chat/message-service";
+import type { EventPublisher } from "../../src/events/types";
 
 interface ChatHistoryMessage {
   id: string;
@@ -12,7 +12,7 @@ interface ChatHistoryMessage {
   createdAt: string;
 }
 
-interface ChatHistoryStore extends ChatMessageStore {
+interface ChatHistoryService extends ChatMessageService {
   listMessagesByThreadId(threadId: string): Promise<ChatHistoryMessage[]>;
 }
 
@@ -41,7 +41,7 @@ describe("GET /api/chat/threads/:threadId/messages", () => {
     const requestedThreadId = "thr_abcdefghijklmnopqrstuvwx";
     const listCalls: string[] = [];
 
-    const store: ChatHistoryStore = {
+    const messageService: ChatHistoryService = {
       createIncomingMessage: async (input) => {
         return {
           messageId: `msg_${input.correlationId}`,
@@ -87,7 +87,7 @@ describe("GET /api/chat/threads/:threadId/messages", () => {
 
     const app = createApp({
       publisher,
-      messageStore: store,
+      messageService,
     });
 
     const res = await app.request(`/api/chat/threads/${requestedThreadId}/messages`);
@@ -122,7 +122,7 @@ describe("GET /api/chat/threads/:threadId/messages", () => {
     const { publisher } = createPublisherSpy();
     const requestedThreadId = "thr_abcdefghijklmnopqrstuvwx";
 
-    const store: ChatHistoryStore = {
+    const messageService: ChatHistoryService = {
       createIncomingMessage: async (input) => {
         return {
           messageId: `msg_${input.correlationId}`,
@@ -142,7 +142,7 @@ describe("GET /api/chat/threads/:threadId/messages", () => {
 
     const app = createApp({
       publisher,
-      messageStore: store,
+      messageService,
     });
 
     const res = await app.request(`/api/chat/threads/${requestedThreadId}/messages`);
@@ -162,7 +162,7 @@ describe("GET /api/chat/threads/:threadId/messages", () => {
   test("returns 400 for an invalid threadId format", async () => {
     const { publisher } = createPublisherSpy();
 
-    const store: ChatHistoryStore = {
+    const messageService: ChatHistoryService = {
       createIncomingMessage: async (input) => {
         return {
           messageId: `msg_${input.correlationId}`,
@@ -182,7 +182,7 @@ describe("GET /api/chat/threads/:threadId/messages", () => {
 
     const app = createApp({
       publisher,
-      messageStore: store,
+      messageService,
     });
 
     const res = await app.request("/api/chat/threads/thread_1/messages");
