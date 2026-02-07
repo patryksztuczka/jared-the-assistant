@@ -15,6 +15,13 @@
       "when": 1770464666781,
       "tag": "0001_glossy_chameleon",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1770471545881,
+      "tag": "0002_curved_mordo",
+      "breakpoints": true
     }
   ]
 }

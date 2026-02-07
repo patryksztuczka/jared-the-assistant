@@ -32,6 +32,7 @@ describeIfRedis("Redis Streams integration", () => {
         timestamp: "2026-01-01T00:00:00.000Z",
         correlationId: "corr_int_1",
         payload: {
+          runId: "run_abcdefghijklmnopqrstuvwx",
           threadId: "thr_abcdefghijklmnopqrstuvwx",
           prompt: "process me",
         },

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createApp } from "./app";
 import type { ChatMessageStore } from "./chat/message-store";
+import type { ChatRunStore } from "./chat/run-store";
 import { EVENT_TYPE, type AgentEvent, type EventPublisher } from "./events/types";
 
 const createPublisherSpy = () => {
@@ -44,6 +45,36 @@ const createStoreSpy = () => {
   };
 };
 
+const createRunStoreSpy = () => {
+  const createQueuedRunCalls: Array<{ id: string; threadId: string; correlationId: string }> = [];
+  const runStore: ChatRunStore = {
+    createQueuedRun: async (input) => {
+      createQueuedRunCalls.push(input);
+
+      return {
+        id: input.id,
+        threadId: input.threadId,
+        correlationId: input.correlationId,
+        status: "queued",
+        safeError: undefined,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+    },
+    updateRunStatus: async () => {
+      throw new Error("updateRunStatus should not be called in ingress test");
+    },
+    getRunById: async () => {
+      return undefined;
+    },
+  };
+
+  return {
+    runStore,
+    createQueuedRunCalls,
+  };
+};
+
 const readJsonIfPresent = async (res: Response) => {
   const contentType = res.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) {
@@ -58,6 +89,7 @@ describe("POST /api/chat/messages", () => {
     const callOrder: string[] = [];
     const { publishedEvents } = createPublisherSpy();
     const { store, calls } = createStoreSpy();
+    const { runStore, createQueuedRunCalls } = createRunStoreSpy();
 
     const publisher: EventPublisher = {
       publish: async (event) => {
@@ -68,6 +100,7 @@ describe("POST /api/chat/messages", () => {
 
     const app = createApp({
       publisher,
+      runStore,
       messageStore: {
         createIncomingMessage: async (input) => {
           callOrder.push("store");
@@ -96,6 +129,7 @@ describe("POST /api/chat/messages", () => {
       | {
           ok: boolean;
           status: string;
+          runId: string;
           threadId: string;
           messageId: string;
           correlationId: string;
@@ -106,6 +140,8 @@ describe("POST /api/chat/messages", () => {
     expect(body).toBeDefined();
     expect(body?.ok).toBe(true);
     expect(body?.status).toBe("accepted");
+    expect(typeof body?.runId).toBe("string");
+    expect(body?.runId).toMatch(/^run_[a-z0-9]{24}$/);
     expect(typeof body?.threadId).toBe("string");
     expect(body?.threadId).toMatch(/^thr_[a-z0-9]{24}$/);
     expect(body?.messageId).toBe("msg_123");
@@ -126,15 +162,24 @@ describe("POST /api/chat/messages", () => {
     expect(publishedEvents).toHaveLength(1);
     expect(publishedEvents[0]?.type).toBe(EVENT_TYPE.AGENT_RUN_REQUESTED);
     expect(publishedEvents[0]?.correlationId).toBe(correlationId);
+    expect(createQueuedRunCalls).toEqual([
+      {
+        id: body?.runId ?? "",
+        threadId: body?.threadId,
+        correlationId,
+      },
+    ]);
     expect(callOrder).toEqual(["store", "publish"]);
   });
 
   test("rejects invalid payload and does not persist nor publish", async () => {
     const { publisher, publishedEvents } = createPublisherSpy();
     const { store, calls } = createStoreSpy();
+    const { runStore, createQueuedRunCalls } = createRunStoreSpy();
 
     const app = createApp({
       publisher,
+      runStore,
       messageStore: store,
     });
 
@@ -156,15 +201,18 @@ describe("POST /api/chat/messages", () => {
     expect(body?.ok).toBe(false);
     expect(typeof body?.error).toBe("string");
     expect(calls).toHaveLength(0);
+    expect(createQueuedRunCalls).toHaveLength(0);
     expect(publishedEvents).toHaveLength(0);
   });
 
   test("rejects missing content and does not persist nor publish", async () => {
     const { publisher, publishedEvents } = createPublisherSpy();
     const { store, calls } = createStoreSpy();
+    const { runStore, createQueuedRunCalls } = createRunStoreSpy();
 
     const app = createApp({
       publisher,
+      runStore,
       messageStore: store,
     });
 
@@ -185,6 +233,7 @@ describe("POST /api/chat/messages", () => {
     expect(body?.ok).toBe(false);
     expect(typeof body?.error).toBe("string");
     expect(calls).toHaveLength(0);
+    expect(createQueuedRunCalls).toHaveLength(0);
     expect(publishedEvents).toHaveLength(0);
   });
 });
