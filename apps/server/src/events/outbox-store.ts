@@ -1,0 +1,188 @@
+import { asc, eq, inArray } from "drizzle-orm";
+import type { LibSQLDatabase } from "drizzle-orm/libsql";
+import { outboxEvents, type Schema } from "../../db/schema";
+import type { AgentEvent } from "./types";
+
+export type OutboxStatus = "pending" | "published" | "failed";
+
+export interface OutboxEventRecord {
+  id: string;
+  event: AgentEvent;
+  status: OutboxStatus;
+  attempts: number;
+  lastError?: string;
+  publishedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface CreateOutboxEventInput {
+  event: AgentEvent;
+}
+
+export interface OutboxStore {
+  createPendingEvent(input: CreateOutboxEventInput): Promise<void>;
+  listRetryableEvents(limit: number): Promise<OutboxEventRecord[]>;
+  markPublished(id: string): Promise<void>;
+  markPublishFailed(id: string, error: string): Promise<void>;
+}
+
+const RETRYABLE_STATUSES: OutboxStatus[] = ["pending", "failed"];
+
+export const createDrizzleOutboxStore = (database: LibSQLDatabase<Schema>) => {
+  const createPendingEvent = async (input: CreateOutboxEventInput) => {
+    await database.insert(outboxEvents).values({
+      id: input.event.id,
+      eventType: input.event.type,
+      payload: JSON.stringify(input.event),
+      status: "pending",
+      attempts: 0,
+      lastError: undefined,
+      publishedAt: undefined,
+    });
+  };
+
+  const listRetryableEvents = async (limit: number) => {
+    const results = await database
+      .select()
+      .from(outboxEvents)
+      .where(inArray(outboxEvents.status, RETRYABLE_STATUSES))
+      .orderBy(asc(outboxEvents.createdAt))
+      .limit(limit);
+
+    return results.flatMap((row) => {
+      try {
+        const parsedEvent = JSON.parse(row.payload) as AgentEvent;
+
+        return {
+          id: row.id,
+          event: parsedEvent,
+          status: row.status,
+          attempts: row.attempts,
+          lastError: row.lastError ?? undefined,
+          publishedAt: row.publishedAt ? row.publishedAt.toISOString() : undefined,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString(),
+        } satisfies OutboxEventRecord;
+      } catch {
+        return [];
+      }
+    });
+  };
+
+  const markPublished = async (id: string) => {
+    await database
+      .update(outboxEvents)
+      .set({
+        status: "published",
+        publishedAt: new Date(),
+        updatedAt: new Date(),
+        lastError: undefined,
+      })
+      .where(eq(outboxEvents.id, id));
+  };
+
+  const markPublishFailed = async (id: string, error: string) => {
+    const existing = await database
+      .select({
+        attempts: outboxEvents.attempts,
+      })
+      .from(outboxEvents)
+      .where(eq(outboxEvents.id, id))
+      .limit(1);
+
+    const first = existing[0];
+    if (!first) {
+      return;
+    }
+
+    await database
+      .update(outboxEvents)
+      .set({
+        status: "failed",
+        attempts: first.attempts + 1,
+        lastError: error,
+        updatedAt: new Date(),
+      })
+      .where(eq(outboxEvents.id, id));
+  };
+
+  return {
+    createPendingEvent,
+    listRetryableEvents,
+    markPublished,
+    markPublishFailed,
+  } satisfies OutboxStore;
+};
+
+export const createInMemoryOutboxStore = () => {
+  const records = new Map<string, OutboxEventRecord>();
+
+  const createPendingEvent = async (input: CreateOutboxEventInput) => {
+    const now = new Date().toISOString();
+    records.set(input.event.id, {
+      id: input.event.id,
+      event: input.event,
+      status: "pending",
+      attempts: 0,
+      lastError: undefined,
+      publishedAt: undefined,
+      createdAt: now,
+      updatedAt: now,
+    });
+  };
+
+  const listRetryableEvents = async (limit: number) => {
+    return [...records.values()]
+      .filter((record) => {
+        return record.status === "pending" || record.status === "failed";
+      })
+      .toSorted((left, right) => {
+        return left.createdAt.localeCompare(right.createdAt);
+      })
+      .slice(0, limit);
+  };
+
+  const markPublished = async (id: string) => {
+    const existing = records.get(id);
+    if (!existing) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    records.set(id, {
+      ...existing,
+      status: "published",
+      lastError: undefined,
+      publishedAt: now,
+      updatedAt: now,
+    });
+  };
+
+  const markPublishFailed = async (id: string, error: string) => {
+    const existing = records.get(id);
+    if (!existing) {
+      return;
+    }
+
+    records.set(id, {
+      ...existing,
+      status: "failed",
+      attempts: existing.attempts + 1,
+      lastError: error,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const getById = (id: string) => {
+    return records.get(id);
+  };
+
+  return {
+    createPendingEvent,
+    listRetryableEvents,
+    markPublished,
+    markPublishFailed,
+    getById,
+  };
+};

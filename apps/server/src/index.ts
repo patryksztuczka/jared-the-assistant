@@ -1,7 +1,10 @@
 import Redis from "ioredis";
 import { createApp } from "./app";
+import { createDrizzleChatIngressStore } from "./chat/ingress-store";
 import { createDrizzleChatMessageStore } from "./chat/message-store";
 import { createDrizzleChatRunStore } from "./chat/run-store";
+import { OutboxPublisher } from "./events/outbox-publisher";
+import { createDrizzleOutboxStore } from "./events/outbox-store";
 import { RedisStreamBus } from "./events/redis-stream";
 import { AgentRuntime } from "./runtime/agent-runtime";
 import { db } from "../db";
@@ -18,6 +21,12 @@ const bus = new RedisStreamBus(redis, {
 });
 const messageStore = createDrizzleChatMessageStore(db);
 const runStore = createDrizzleChatRunStore(db);
+const ingressStore = createDrizzleChatIngressStore(db);
+const outboxStore = createDrizzleOutboxStore(db);
+const outboxPublisher = new OutboxPublisher({
+  outboxStore,
+  publisher: bus,
+});
 const runtime = new AgentRuntime({
   bus,
   messageStore,
@@ -28,8 +37,9 @@ const runtime = new AgentRuntime({
 
 await runtime.init();
 runtime.start();
+outboxPublisher.start();
 
-const app = createApp({ publisher: bus, messageStore, runStore });
+const app = createApp({ ingressStore, messageStore, runStore });
 
 const server = Bun.serve({
   port,
@@ -49,6 +59,7 @@ const shutdown = async (signal: NodeJS.Signals) => {
   console.log(`Received ${signal}, shutting down...`);
 
   runtime.stop();
+  outboxPublisher.stop();
 
   try {
     server.stop(true);
