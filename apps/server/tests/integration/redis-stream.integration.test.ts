@@ -35,6 +35,7 @@ describeIfRedis("Redis Streams integration", () => {
           runId: "run_abcdefghijklmnopqrstuvwx",
           threadId: "thr_abcdefghijklmnopqrstuvwx",
           prompt: "process me",
+          model: "gpt-4o-mini",
         },
       };
 

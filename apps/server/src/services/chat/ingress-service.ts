@@ -6,6 +6,7 @@ interface CreateIncomingMessageAndQueueRunInput {
   threadId: string;
   runId: string;
   content: string;
+  model: string;
   correlationId: string;
   eventId?: string;
 }
@@ -14,6 +15,7 @@ interface PersistedIngressRecord {
   messageId: string;
   threadId: string;
   runId: string;
+  model: string;
   correlationId: string;
 }
 
@@ -35,6 +37,7 @@ export const createDrizzleChatIngressService = (database: LibSQLDatabase<Schema>
         runId: input.runId,
         threadId: input.threadId,
         prompt: input.content,
+        model: input.model,
       },
     };
 
@@ -79,6 +82,7 @@ export const createDrizzleChatIngressService = (database: LibSQLDatabase<Schema>
       messageId,
       threadId: input.threadId,
       runId: input.runId,
+      model: input.model,
       correlationId: input.correlationId,
     } satisfies PersistedIngressRecord;
   };
@@ -97,6 +101,7 @@ export const createInMemoryChatIngressService = () => {
       messageId,
       threadId: input.threadId,
       runId: input.runId,
+      model: input.model,
       correlationId: input.correlationId,
     } satisfies PersistedIngressRecord;
 

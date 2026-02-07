@@ -12,6 +12,7 @@ export interface AgentRunRequestedPayload {
   runId: string;
   threadId: string;
   prompt: string;
+  model: string;
   simulateFailure?: boolean;
 }
 
@@ -50,6 +51,7 @@ export const createChatMessageRequestSchema = z.object({
     .regex(/^thr_[a-z0-9]{24}$/)
     .optional(),
   content: z.string().trim().min(1),
+  model: z.string().trim().min(1).max(100).optional(),
   correlationId: z.string().optional(),
 });
 

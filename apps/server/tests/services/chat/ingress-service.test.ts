@@ -35,6 +35,7 @@ describe("createDrizzleChatIngressService", () => {
           threadId: "thr_abcdefghijklmnopqrstuvwx",
           runId: "run_abcdefghijklmnopqrstuvwx",
           content: "hello",
+          model: "gpt-4o-mini",
           correlationId: "corr_1",
           eventId: "evt_conflict",
         }),

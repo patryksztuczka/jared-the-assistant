@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { EVENT_TYPE, type AgentEvent } from "../../../src/events/types";
 import type { ChatMessageService } from "../../../src/services/chat/message-service";
+import type { ChatLlmService } from "../../../src/services/chat/llm-service";
 import type { ChatRunService, RunStatus } from "../../../src/services/chat/run-service";
 import { AgentRuntime, type RuntimeEventBus } from "../../../src/runtime/agent-runtime";
 
@@ -42,6 +43,7 @@ describe("AgentRuntime", () => {
           runId: "run_success_1",
           threadId: "thr_abcdefghijklmnopqrstuvwx",
           prompt: "hello run status",
+          model: "gpt-4o-mini",
         },
       },
     });
@@ -96,6 +98,7 @@ describe("AgentRuntime", () => {
           runId: "run_fail_1",
           threadId: "thr_abcdefghijklmnopqrstuvwx",
           prompt: "hello run status fail",
+          model: "gpt-4o-mini",
           simulateFailure: true,
         },
       },
@@ -163,6 +166,7 @@ describe("AgentRuntime", () => {
           runId: "run_persist_1",
           threadId: "thr_abcdefghijklmnopqrstuvwx",
           prompt: "hello persistence",
+          model: "gpt-4o-mini",
         },
       },
     });
@@ -215,6 +219,144 @@ describe("AgentRuntime", () => {
     expect(bus.published[0]?.type).toBe(EVENT_TYPE.AGENT_RUN_COMPLETED);
   });
 
+  test("uses summary plus recent memory and honors per-request model", async () => {
+    const bus = new FakeRuntimeBus();
+    bus.queuedEntries.push({
+      streamEntryId: "0-6",
+      event: {
+        id: "evt_req_memory_1",
+        type: EVENT_TYPE.AGENT_RUN_REQUESTED,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        correlationId: "corr_memory_1",
+        payload: {
+          runId: "run_memory_1",
+          threadId: "thr_abcdefghijklmnopqrstuvwx",
+          prompt: "Now implement the plan",
+          model: "gpt-4.1-mini",
+        },
+      },
+    });
+
+    const llmCalls: {
+      summaryModel?: string;
+      summaryMessages?: string[];
+      responseModel?: string;
+      responseMessages?: Array<{ role: string; content: string }>;
+    } = {};
+
+    const chatLlmService: ChatLlmService = {
+      summarizeConversation: async (input) => {
+        llmCalls.summaryModel = input.model;
+        llmCalls.summaryMessages = input.messages.map((message) => message.content);
+        return "Summary of earlier conversation";
+      },
+      generateAssistantResponse: async (input) => {
+        llmCalls.responseModel = input.model;
+        llmCalls.responseMessages = input.messages.map((message) => {
+          return { role: message.role, content: message.content };
+        });
+        return "Implementation steps ready";
+      },
+    };
+
+    const messageService: ChatMessageService = {
+      createIncomingMessage: async (input) => {
+        return {
+          messageId: `msg_incoming_${input.correlationId}`,
+          threadId: input.threadId,
+        };
+      },
+      createAssistantMessage: async (input) => {
+        return {
+          messageId: `msg_assistant_${input.correlationId}`,
+          threadId: input.threadId,
+        };
+      },
+      listMessagesByThreadId: async () => {
+        return [
+          {
+            id: "msg_1",
+            threadId: "thr_abcdefghijklmnopqrstuvwx",
+            role: "user",
+            content: "Build a migration plan",
+            correlationId: "corr_1",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+          {
+            id: "msg_2",
+            threadId: "thr_abcdefghijklmnopqrstuvwx",
+            role: "assistant",
+            content: "Start from schema changes",
+            correlationId: "corr_1",
+            createdAt: "2026-01-01T00:00:01.000Z",
+          },
+          {
+            id: "msg_3",
+            threadId: "thr_abcdefghijklmnopqrstuvwx",
+            role: "user",
+            content: "Also include rollback",
+            correlationId: "corr_2",
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+          {
+            id: "msg_4",
+            threadId: "thr_abcdefghijklmnopqrstuvwx",
+            role: "assistant",
+            content: "Rollback included",
+            correlationId: "corr_2",
+            createdAt: "2026-01-01T00:00:03.000Z",
+          },
+          {
+            id: "msg_5",
+            threadId: "thr_abcdefghijklmnopqrstuvwx",
+            role: "user",
+            content: "Now implement the plan",
+            correlationId: "corr_memory_1",
+            createdAt: "2026-01-01T00:00:04.000Z",
+          },
+        ];
+      },
+    };
+
+    const runtime = new AgentRuntime({
+      bus,
+      messageService,
+      chatLlmService,
+      consumerGroup: "group_memory",
+      consumerName: "consumer_memory",
+      summaryModel: "gpt-4o-mini",
+      memoryRecentMessageCount: 2,
+      logger: { info: () => {}, error: () => {} },
+    });
+
+    await runtime.processOnce();
+
+    expect(llmCalls.summaryModel).toBe("gpt-4o-mini");
+    expect(llmCalls.summaryMessages).toEqual([
+      "Build a migration plan",
+      "Start from schema changes",
+      "Also include rollback",
+    ]);
+    expect(llmCalls.responseModel).toBe("gpt-4.1-mini");
+    expect(llmCalls.responseMessages?.[0]?.role).toBe("system");
+    expect(llmCalls.responseMessages?.[0]?.content).toContain("Summary of earlier conversation");
+    expect(llmCalls.responseMessages?.slice(1)).toEqual([
+      {
+        role: "assistant",
+        content: "Rollback included",
+      },
+      {
+        role: "user",
+        content: "Now implement the plan",
+      },
+    ]);
+    expect(bus.published[0]?.type).toBe(EVENT_TYPE.AGENT_RUN_COMPLETED);
+    expect(bus.published[0]?.payload).toEqual({
+      requestEventId: "evt_req_memory_1",
+      output: "Implementation steps ready",
+    });
+  });
+
   test("uses crypto ids for emitted events", async () => {
     const bus = new FakeRuntimeBus();
     bus.queuedEntries.push({
@@ -228,6 +370,7 @@ describe("AgentRuntime", () => {
           runId: "run_default_1",
           threadId: "thr_abcdefghijklmnopqrstuvwx",
           prompt: "hello default generator",
+          model: "gpt-4o-mini",
         },
       },
     });
@@ -262,6 +405,7 @@ describe("AgentRuntime", () => {
           runId: "run_1",
           threadId: "thr_zyxwvutsrqponmlkjihgfedc",
           prompt: "hello",
+          model: "gpt-4o-mini",
         },
       },
     });
@@ -303,6 +447,7 @@ describe("AgentRuntime", () => {
           runId: "run_2",
           threadId: "thr_abcdefghijklmnopqrstuvwx",
           prompt: "hello",
+          model: "gpt-4o-mini",
           simulateFailure: true,
         },
       },

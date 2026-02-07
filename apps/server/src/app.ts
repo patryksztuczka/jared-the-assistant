@@ -6,6 +6,10 @@ import {
 } from "./services/chat/message-service";
 import { createInMemoryChatRunService, type ChatRunService } from "./services/chat/run-service";
 import type { ChatIngressService } from "./services/chat/ingress-service";
+import {
+  createEnvironmentChatModelCatalogService,
+  type ChatModelCatalogService,
+} from "./services/chat/model-catalog-service";
 import { EVENT_TYPE, parseCreateChatMessageRequest, type EventPublisher } from "./events/types";
 
 interface CreateAppOptions {
@@ -13,6 +17,7 @@ interface CreateAppOptions {
   ingressService?: ChatIngressService;
   messageService?: ChatMessageService;
   runService?: ChatRunService;
+  modelCatalogService?: ChatModelCatalogService;
 }
 
 export const createApp = (options: CreateAppOptions) => {
@@ -20,6 +25,8 @@ export const createApp = (options: CreateAppOptions) => {
   const messageService = options.messageService ?? createInMemoryChatMessageService();
   const runService = options.runService ?? createInMemoryChatRunService();
   const ingressService = options.ingressService;
+  const modelCatalogService =
+    options.modelCatalogService ?? createEnvironmentChatModelCatalogService();
   const threadIdPattern = /^thr_[a-z0-9]{24}$/;
   const runIdPattern = /^run_[a-z0-9]{24}$/;
 
@@ -38,11 +45,24 @@ export const createApp = (options: CreateAppOptions) => {
         {
           ok: false,
           error:
-            "Invalid request body. Expected { content: string, threadId?: 'thr_<24 lowercase alphanumerics>' }",
+            "Invalid request body. Expected { content: string, model?: string, threadId?: 'thr_<24 lowercase alphanumerics>' }",
         },
         400,
       );
     }
+
+    const modelResolution = modelCatalogService.resolveModel(request.model);
+    if (!modelResolution.model) {
+      return c.json(
+        {
+          ok: false,
+          error: modelResolution.error ?? "Unsupported model",
+        },
+        400,
+      );
+    }
+
+    const model = modelResolution.model;
 
     const threadId = request.threadId ?? `thr_${createId()}`;
     const runId = `run_${createId()}`;
@@ -53,6 +73,7 @@ export const createApp = (options: CreateAppOptions) => {
           threadId,
           runId,
           content: request.content,
+          model,
           correlationId,
         })
       : await messageService.createIncomingMessage({
@@ -81,6 +102,7 @@ export const createApp = (options: CreateAppOptions) => {
           runId,
           threadId: persistedMessage.threadId,
           prompt: request.content,
+          model,
         },
       });
     }
@@ -92,6 +114,7 @@ export const createApp = (options: CreateAppOptions) => {
         runId,
         threadId: persistedMessage.threadId,
         messageId: persistedMessage.messageId,
+        model,
         correlationId,
       },
       202,

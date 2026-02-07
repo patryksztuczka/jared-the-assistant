@@ -88,8 +88,12 @@ Chat ingress example:
 ```bash
 curl -X POST http://localhost:3000/api/chat/messages \
   -H "content-type: application/json" \
-  -d '{"content":"Summarize current state"}'
+  -d '{"content":"Summarize current state", "model":"gpt-4o-mini"}'
 ```
+
+`model` is optional. If omitted, the server uses `CHAT_DEFAULT_MODEL`.
+
+Environment variable template: `.env.example`.
 
 Optional environment variables:
 
@@ -97,6 +101,11 @@ Optional environment variables:
 - `REDIS_STREAM_KEY` (default `agent_events`)
 - `REDIS_CONSUMER_GROUP` (default `agent_runtime`)
 - `REDIS_CONSUMER_NAME` (default `worker-<pid>`)
+- `OPENAI_API_KEY` (required for real LLM responses)
+- `CHAT_ALLOWED_MODELS` (optional comma-separated allow list; when empty, any model id is allowed)
+- `CHAT_DEFAULT_MODEL` (default selected model; default `gpt-4o-mini`)
+- `CHAT_SUMMARY_MODEL` (optional model for summary memory generation)
+- `CHAT_MEMORY_RECENT_MESSAGES` (count of recent messages kept verbatim; default `8`)
 
 ## Database (Drizzle ORM + SQLite)
 
