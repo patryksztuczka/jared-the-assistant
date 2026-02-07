@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { EVENT_TYPE, type AgentEvent } from "../events/types";
+import type { ChatMessageStore } from "../chat/message-store";
 import { AgentRuntime, type RuntimeEventBus } from "./agent-runtime";
 
 class FakeRuntimeBus implements RuntimeEventBus {
@@ -27,6 +28,70 @@ class FakeRuntimeBus implements RuntimeEventBus {
 }
 
 describe("AgentRuntime", () => {
+  test("persists assistant message with thread and correlation from request flow", async () => {
+    const bus = new FakeRuntimeBus();
+    bus.queuedEntries.push({
+      streamEntryId: "0-2",
+      event: {
+        id: "evt_req_persist_1",
+        type: EVENT_TYPE.AGENT_RUN_REQUESTED,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        correlationId: "corr_persist_1",
+        payload: {
+          threadId: "thr_abcdefghijklmnopqrstuvwx",
+          prompt: "hello persistence",
+        },
+      },
+    });
+
+    const persistedAssistantMessages: Array<{
+      threadId: string;
+      content: string;
+      correlationId: string;
+    }> = [];
+
+    const messageStore: ChatMessageStore = {
+      createIncomingMessage: async (input) => {
+        return {
+          messageId: `msg_incoming_${input.correlationId}`,
+          threadId: input.threadId,
+        };
+      },
+      createAssistantMessage: async (input) => {
+        persistedAssistantMessages.push(input);
+
+        return {
+          messageId: "msg_assistant_1",
+          threadId: input.threadId,
+        };
+      },
+      listMessagesByThreadId: async () => {
+        return [];
+      },
+    };
+
+    const runtime = new AgentRuntime({
+      bus,
+      messageStore,
+      consumerGroup: "group_persist",
+      consumerName: "consumer_persist",
+      logger: { info: () => {}, error: () => {} },
+    });
+
+    const processed = await runtime.processOnce();
+
+    expect(processed).toBe(1);
+    expect(persistedAssistantMessages).toEqual([
+      {
+        threadId: "thr_abcdefghijklmnopqrstuvwx",
+        content: "Handled prompt: hello persistence",
+        correlationId: "corr_persist_1",
+      },
+    ]);
+    expect(bus.published).toHaveLength(1);
+    expect(bus.published[0]?.type).toBe(EVENT_TYPE.AGENT_RUN_COMPLETED);
+  });
+
   test("uses crypto ids for emitted events", async () => {
     const bus = new FakeRuntimeBus();
     bus.queuedEntries.push({
@@ -37,6 +102,7 @@ describe("AgentRuntime", () => {
         timestamp: "2026-01-01T00:00:00.000Z",
         correlationId: "corr_default_1",
         payload: {
+          threadId: "thr_abcdefghijklmnopqrstuvwx",
           prompt: "hello default generator",
         },
       },
@@ -69,6 +135,7 @@ describe("AgentRuntime", () => {
         timestamp: "2026-01-01T00:00:00.000Z",
         correlationId: "corr_1",
         payload: {
+          threadId: "thr_zyxwvutsrqponmlkjihgfedc",
           prompt: "hello",
         },
       },
@@ -108,6 +175,7 @@ describe("AgentRuntime", () => {
         timestamp: "2026-01-01T00:00:00.000Z",
         correlationId: "corr_2",
         payload: {
+          threadId: "thr_abcdefghijklmnopqrstuvwx",
           prompt: "hello",
           simulateFailure: true,
         },

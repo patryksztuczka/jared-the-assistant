@@ -15,12 +15,13 @@ const redis = new Redis(redisUrl);
 const bus = new RedisStreamBus(redis, {
   streamKey: redisStreamKey,
 });
+const messageStore = createDrizzleChatMessageStore(db);
 const runtime = new AgentRuntime({
   bus,
+  messageStore,
   consumerGroup: redisConsumerGroup,
   consumerName: redisConsumerName,
 });
-const messageStore = createDrizzleChatMessageStore(db);
 
 await runtime.init();
 runtime.start();

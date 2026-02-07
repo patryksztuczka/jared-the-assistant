@@ -48,6 +48,7 @@ export const createApp = (options: CreateAppOptions) => {
       timestamp: new Date().toISOString(),
       correlationId,
       payload: {
+        threadId: persistedMessage.threadId,
         prompt: request.content,
       },
     });
