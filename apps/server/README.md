@@ -106,6 +106,7 @@ Optional environment variables:
 - `CHAT_DEFAULT_MODEL` (default selected model; default `gpt-4o-mini`)
 - `CHAT_SUMMARY_MODEL` (optional model for summary memory generation)
 - `CHAT_MEMORY_RECENT_MESSAGES` (count of recent messages kept verbatim; default `8`)
+- `AGENT_MAX_LOOP_ITERATIONS` (maximum iterations per run; default `1`)
 
 ## Database (Drizzle ORM + SQLite)
 

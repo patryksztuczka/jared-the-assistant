@@ -1,13 +1,9 @@
 import { EVENT_TYPE, type AgentEvent, type AgentRunRequestedPayload } from "../events/types";
 import type { StreamEntry } from "../events/redis-stream";
-import type { ChatHistoryMessage, ChatMessageService } from "../services/chat/message-service";
+import type { ChatMessageService } from "../services/chat/message-service";
 import type { ChatRunService, RunStatus } from "../services/chat/run-service";
-import {
-  buildMemorySystemMessage,
-  createFallbackChatLlmService,
-  type ChatLlmService,
-  type ChatPromptMessage,
-} from "../services/chat/llm-service";
+import { createFallbackChatLlmService, type ChatLlmService } from "../services/chat/llm-service";
+import { ChatAgentLoop } from "./chat-agent-loop";
 
 export interface RuntimeEventBus {
   publish(event: AgentEvent): Promise<void>;
@@ -22,7 +18,6 @@ export interface RuntimeEventBus {
 
 const GENERIC_RUNTIME_ERROR_MESSAGE = "Agent runtime failed to process the request.";
 const DEFAULT_MODEL = "gpt-4o-mini";
-const DEFAULT_MEMORY_RECENT_MESSAGE_COUNT = 8;
 
 interface AgentRuntimeOptions {
   bus: RuntimeEventBus;
@@ -34,6 +29,7 @@ interface AgentRuntimeOptions {
   defaultModel?: string;
   summaryModel?: string;
   memoryRecentMessageCount?: number;
+  maxLoopIterations?: number;
   logger?: Pick<Console, "info" | "error">;
 }
 
@@ -41,12 +37,9 @@ export class AgentRuntime {
   private readonly bus: RuntimeEventBus;
   private readonly messageService?: ChatMessageService;
   private readonly runService?: ChatRunService;
-  private readonly chatLlmService: ChatLlmService;
   private readonly consumerGroup: string;
   private readonly consumerName: string;
-  private readonly defaultModel: string;
-  private readonly summaryModel?: string;
-  private readonly memoryRecentMessageCount: number;
+  private readonly chatAgentLoop: ChatAgentLoop;
   private readonly logger: Pick<Console, "info" | "error">;
   private isRunning = false;
 
@@ -54,13 +47,21 @@ export class AgentRuntime {
     this.bus = options.bus;
     this.messageService = options.messageService;
     this.runService = options.runService;
-    this.chatLlmService = options.chatLlmService ?? createFallbackChatLlmService();
     this.consumerGroup = options.consumerGroup;
     this.consumerName = options.consumerName;
-    this.defaultModel = options.defaultModel ?? DEFAULT_MODEL;
-    this.summaryModel = options.summaryModel;
-    this.memoryRecentMessageCount = normalizeRecentMessageCount(options.memoryRecentMessageCount);
     this.logger = options.logger ?? console;
+
+    const chatLlmService = options.chatLlmService ?? createFallbackChatLlmService();
+    const defaultModel = options.defaultModel ?? DEFAULT_MODEL;
+
+    this.chatAgentLoop = new ChatAgentLoop({
+      chatLlmService,
+      messageService: options.messageService,
+      defaultModel,
+      summaryModel: options.summaryModel,
+      memoryRecentMessageCount: options.memoryRecentMessageCount,
+      maxIterations: options.maxLoopIterations,
+    });
   }
 
   public async init() {
@@ -157,7 +158,17 @@ export class AgentRuntime {
       throw new Error("Simulated runtime failure");
     }
 
-    const output = await this.generateAssistantOutput(event);
+    const loopResult = await this.chatAgentLoop.run({
+      sessionId: payload.runId,
+      threadId: payload.threadId,
+      correlationId: event.correlationId,
+      prompt: payload.prompt,
+      model: payload.model,
+    });
+
+    if (loopResult.reason !== "success" || !loopResult.output) {
+      throw new Error(loopResult.error ?? `Agent loop stopped: ${loopResult.reason}`);
+    }
 
     return {
       id: crypto.randomUUID(),
@@ -166,64 +177,9 @@ export class AgentRuntime {
       correlationId: event.correlationId,
       payload: {
         requestEventId: event.id,
-        output,
+        output: loopResult.output,
       },
     };
-  }
-
-  private async generateAssistantOutput(event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>) {
-    const payload = event.payload as AgentRunRequestedPayload;
-    const model = payload.model || this.defaultModel;
-    const threadMessages = await this.getThreadMessages(payload.threadId);
-    const recentMessages = buildRecentPromptMessages(threadMessages, this.memoryRecentMessageCount);
-
-    const hasCurrentPromptMessage = threadMessages.some((message) => {
-      return message.correlationId === event.correlationId && message.role === "user";
-    });
-
-    if (!hasCurrentPromptMessage) {
-      recentMessages.push({
-        role: "user",
-        content: payload.prompt,
-      });
-    }
-
-    const olderMessages = buildOlderPromptMessages(threadMessages, this.memoryRecentMessageCount);
-    const summaryModel = this.summaryModel || model;
-
-    if (olderMessages.length > 0) {
-      const summary = await this.chatLlmService.summarizeConversation({
-        model: summaryModel,
-        messages: olderMessages,
-      });
-
-      if (summary) {
-        return this.chatLlmService.generateAssistantResponse({
-          model,
-          messages: [buildMemorySystemMessage(summary), ...recentMessages],
-        });
-      }
-    }
-
-    if (recentMessages.length === 0) {
-      recentMessages.push({
-        role: "user",
-        content: payload.prompt,
-      });
-    }
-
-    return this.chatLlmService.generateAssistantResponse({
-      model,
-      messages: recentMessages,
-    });
-  }
-
-  private async getThreadMessages(threadId: string) {
-    if (!this.messageService) {
-      return [];
-    }
-
-    return this.messageService.listMessagesByThreadId(threadId);
   }
 
   private async persistAssistantMessage(
@@ -256,40 +212,3 @@ export class AgentRuntime {
     };
   }
 }
-
-const normalizeRecentMessageCount = (value: number | undefined) => {
-  if (!value || Number.isNaN(value)) {
-    return DEFAULT_MEMORY_RECENT_MESSAGE_COUNT;
-  }
-
-  return Math.max(1, Math.floor(value));
-};
-
-const toPromptMessage = (message: ChatHistoryMessage) => {
-  return {
-    role: message.role,
-    content: message.content,
-  } satisfies ChatPromptMessage;
-};
-
-const buildRecentPromptMessages = (messages: ChatHistoryMessage[], recentMessageCount: number) => {
-  if (messages.length <= recentMessageCount) {
-    return messages.map((message) => {
-      return toPromptMessage(message);
-    });
-  }
-
-  return messages.slice(-recentMessageCount).map((message) => {
-    return toPromptMessage(message);
-  });
-};
-
-const buildOlderPromptMessages = (messages: ChatHistoryMessage[], recentMessageCount: number) => {
-  if (messages.length <= recentMessageCount) {
-    return [];
-  }
-
-  return messages.slice(0, -recentMessageCount).map((message) => {
-    return toPromptMessage(message);
-  });
-};

@@ -18,6 +18,7 @@ const redisConsumerGroup = process.env.REDIS_CONSUMER_GROUP ?? "agent_runtime";
 const redisConsumerName = process.env.REDIS_CONSUMER_NAME ?? `worker-${process.pid}`;
 const memoryRecentMessageCount = Number(process.env.CHAT_MEMORY_RECENT_MESSAGES ?? 8);
 const summaryModelFromEnvironment = process.env.CHAT_SUMMARY_MODEL?.trim();
+const maxLoopIterations = Number(process.env.AGENT_MAX_LOOP_ITERATIONS ?? 1);
 
 const redis = new Redis(redisUrl);
 const bus = new RedisStreamBus(redis, {
@@ -43,6 +44,7 @@ const runtime = new AgentRuntime({
   defaultModel: modelCatalogService.getDefaultModel(),
   summaryModel: summaryModelFromEnvironment,
   memoryRecentMessageCount,
+  maxLoopIterations,
 });
 
 await runtime.init();
