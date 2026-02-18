@@ -93,6 +93,18 @@ curl -X POST http://localhost:3000/api/chat/messages \
 
 `model` is optional. If omitted, the server uses `CHAT_DEFAULT_MODEL`.
 
+Quick CLI smoke tester (interactive):
+
+```bash
+bun run chat:cli -- --base-url http://localhost:3000
+```
+
+Optional flags:
+
+- `--model <model-id>`
+- `--thread-id <thr_...>` to continue an existing thread
+- `--timeout-ms <number>` and `--poll-ms <number>`
+
 Environment variable template: `.env.example`.
 
 Optional environment variables:
