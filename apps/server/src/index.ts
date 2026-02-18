@@ -59,6 +59,7 @@ const app = createApp({
   messageService,
   runService,
   modelCatalogService,
+  runLoopEventService,
 });
 
 const server = Bun.serve({

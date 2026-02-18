@@ -19,6 +19,18 @@ interface RunStatusResponse {
   };
 }
 
+interface RunEventsResponse {
+  ok: true;
+  events: RunLoopEventRecord[];
+}
+
+interface RunLoopEventRecord {
+  id: string;
+  eventType: string;
+  decision?: "continue" | "finish";
+  payload: unknown;
+}
+
 interface ThreadMessagesResponse {
   ok: true;
   messages: Array<{
@@ -92,11 +104,28 @@ const run = async () => {
     activeThreadId = accepted.threadId;
 
     console.log(`Run accepted: ${accepted.runId}`);
+    const seenEventIds = new Set<string>();
     const finalStatus = await waitForRunCompletion({
       baseUrl: config.baseUrl,
       runId: accepted.runId,
       timeoutMs: config.timeoutMs,
       pollIntervalMs: config.pollIntervalMs,
+      onPoll: async () => {
+        const events = await getRunEvents(config.baseUrl, accepted.runId);
+        for (const event of events) {
+          if (seenEventIds.has(event.id)) {
+            continue;
+          }
+
+          seenEventIds.add(event.id);
+          const mapped = mapEventForDisplay(event);
+          if (!mapped) {
+            continue;
+          }
+
+          console.log(mapped);
+        }
+      },
     });
 
     if (finalStatus.status === "failed") {
@@ -188,10 +217,12 @@ const waitForRunCompletion = async (inputData: {
   runId: string;
   timeoutMs: number;
   pollIntervalMs: number;
+  onPoll: () => Promise<void>;
 }) => {
   const startTime = Date.now();
 
   while (Date.now() - startTime < inputData.timeoutMs) {
+    await inputData.onPoll();
     const run = await getRunStatus(inputData.baseUrl, inputData.runId);
 
     if (run.status === "completed" || run.status === "failed") {
@@ -245,6 +276,82 @@ const getAssistantReply = async (inputData: {
   });
 
   return reply?.content;
+};
+
+const getRunEvents = async (baseUrl: string, runId: string) => {
+  const response = await fetch(`${baseUrl}/api/chat/runs/${runId}/events`);
+  if (!response.ok) {
+    const errorPayload = await response.text();
+    throw new Error(`Failed to fetch run events (${response.status}): ${errorPayload}`);
+  }
+
+  const payload = (await response.json()) as Partial<RunEventsResponse>;
+  if (!payload.events) {
+    throw new Error("Invalid /api/chat/runs/:runId/events response shape");
+  }
+
+  return payload.events;
+};
+
+const mapEventForDisplay = (event: RunLoopEventRecord) => {
+  if (event.eventType === "loop.step.planned") {
+    const instruction = getStringFromPayload(event.payload, ["step", "instruction"]);
+    if (!instruction) {
+      return;
+    }
+
+    return `Thinking: ${instruction}`;
+  }
+
+  if (event.eventType === "loop.step.executed" || event.eventType === "loop.state.executed") {
+    const output = getStringFromPayload(event.payload, ["observation", "output"]);
+    if (!output) {
+      return;
+    }
+
+    return `Thinking: ${output}`;
+  }
+
+  if (event.eventType === "loop.step.evaluated" || event.eventType === "loop.state.evaluated") {
+    const decision = getDecisionFromPayload(event.payload) ?? event.decision;
+    if (!decision) {
+      return;
+    }
+
+    return `Deciced to ${decision}`;
+  }
+};
+
+const getStringFromPayload = (payload: unknown, path: [string, string]) => {
+  if (!payload || typeof payload !== "object") {
+    return;
+  }
+
+  const payloadRecord = payload as Record<string, unknown>;
+  const first = payloadRecord[path[0]];
+  if (!first || typeof first !== "object") {
+    return;
+  }
+
+  const firstRecord = first as Record<string, unknown>;
+  const value = firstRecord[path[1]];
+  if (typeof value !== "string") {
+    return;
+  }
+
+  return value;
+};
+
+const getDecisionFromPayload = (payload: unknown) => {
+  if (!payload || typeof payload !== "object") {
+    return;
+  }
+
+  const payloadRecord = payload as Record<string, unknown>;
+  const decision = payloadRecord.decision;
+  if (decision === "continue" || decision === "finish") {
+    return decision;
+  }
 };
 
 await run().catch((error: unknown) => {

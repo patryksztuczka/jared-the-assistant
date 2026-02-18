@@ -11,6 +11,7 @@ import {
   type ChatModelCatalogService,
 } from "./services/chat/model-catalog-service";
 import { EVENT_TYPE, parseCreateChatMessageRequest, type EventPublisher } from "./events/types";
+import type { RunLoopEventService } from "./services/chat/loop-event-service";
 
 interface CreateAppOptions {
   publisher?: EventPublisher;
@@ -18,6 +19,7 @@ interface CreateAppOptions {
   messageService?: ChatMessageService;
   runService?: ChatRunService;
   modelCatalogService?: ChatModelCatalogService;
+  runLoopEventService?: RunLoopEventService;
 }
 
 export const createApp = (options: CreateAppOptions) => {
@@ -25,6 +27,7 @@ export const createApp = (options: CreateAppOptions) => {
   const messageService = options.messageService ?? createInMemoryChatMessageService();
   const runService = options.runService ?? createInMemoryChatRunService();
   const ingressService = options.ingressService;
+  const runLoopEventService = options.runLoopEventService;
   const modelCatalogService =
     options.modelCatalogService ?? createEnvironmentChatModelCatalogService();
   const threadIdPattern = /^thr_[a-z0-9]{24}$/;
@@ -167,6 +170,26 @@ export const createApp = (options: CreateAppOptions) => {
     return c.json({
       ok: true,
       run,
+    });
+  });
+
+  app.get("/api/chat/runs/:runId/events", async (c) => {
+    const runId = c.req.param("runId");
+    if (!runIdPattern.test(runId)) {
+      return c.json(
+        {
+          ok: false,
+          error: "Invalid runId. Expected format: run_<24 lowercase alphanumerics>",
+        },
+        400,
+      );
+    }
+
+    const events = runLoopEventService ? await runLoopEventService.listByRunId(runId) : [];
+
+    return c.json({
+      ok: true,
+      events,
     });
   });
 

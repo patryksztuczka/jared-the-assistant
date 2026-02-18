@@ -105,6 +105,8 @@ Optional flags:
 - `--thread-id <thr_...>` to continue an existing thread
 - `--timeout-ms <number>` and `--poll-ms <number>`
 
+The CLI also polls run loop events from `GET /api/chat/runs/:runId/events` and prints progress updates.
+
 Environment variable template: `.env.example`.
 
 Optional environment variables:
