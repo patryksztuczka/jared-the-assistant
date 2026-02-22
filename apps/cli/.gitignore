@@ -1,0 +1,17 @@
+# dependencies
+node_modules
+
+# turbo
+.turbo
+
+# output
+dist
+out
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# OS
+.DS_Store

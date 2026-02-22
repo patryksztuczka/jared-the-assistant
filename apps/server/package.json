@@ -5,7 +5,6 @@
   "private": true,
   "scripts": {
     "dev": "bun --watch src/index.ts",
-    "chat:cli": "bun run src/cli/chat-smoke.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",
     "lint": "eslint .",
@@ -13,9 +12,6 @@
     "check-types": "tsc --noEmit",
     "format:write": "prettier --write .",
     "format": "prettier --check .",
-    "redis:up": "docker compose up -d redis",
-    "redis:down": "docker compose down",
-    "redis:logs": "docker compose logs -f redis",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
@@ -26,10 +22,8 @@
     "@libsql/client": "^0.15.15",
     "@paralleldrive/cuid2": "^3.3.0",
     "ai": "^6.0.77",
-    "commander": "^14.0.3",
     "drizzle-orm": "^0.44.7",
     "hono": "^4.9.8",
-    "inquirer": "^13.2.5",
     "ioredis": "^5.9.2",
     "zod": "^4.3.6"
   },
@@ -41,7 +35,6 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-unicorn": "^62.0.0",
     "globals": "^17.3.0",
-    "prettier": "^3.6.2",
     "typescript": "^5",
     "typescript-eslint": "^8.46.2"
   }

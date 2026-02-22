@@ -1,0 +1,25 @@
+# dependencies
+node_modules
+
+# turbo
+.turbo
+
+# output
+dist
+out
+*.tgz
+
+# logs
+*.log
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# OS
+.DS_Store
+
+# IDEs
+.idea
+.vscode

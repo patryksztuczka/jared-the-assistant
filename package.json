@@ -1,0 +1,24 @@
+{
+  "name": "jarred-the-assistant",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*"
+  ],
+  "packageManager": "bun@1.3.3",
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "format": "turbo format",
+    "check-types": "turbo check-types",
+    "test": "turbo test",
+    "redis:up": "docker compose up -d redis",
+    "redis:down": "docker compose down",
+    "redis:logs": "docker compose logs -f redis"
+  },
+  "devDependencies": {
+    "turbo": "^2.4.4",
+    "prettier": "^3.6.2"
+  }
+}
