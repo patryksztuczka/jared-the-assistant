@@ -45,9 +45,6 @@ export class OutboxPublisher {
       this.triggerProcessing();
     });
 
-    // Initial trigger in case events were created before start
-    this.triggerProcessing();
-
     // Start background poll to catch any missed/failed events
     this.pollTimer = setInterval(() => {
       if (this.isRunning) {

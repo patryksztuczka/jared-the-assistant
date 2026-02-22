@@ -25,13 +25,13 @@ const redis = new Redis(redisUrl);
 const bus = new RedisStreamBus(redis, {
   streamKey: redisStreamKey,
 });
-const pubsub = createChatRunPubSub();
+const runPubsub = createChatRunPubSub();
 const outboxPubsub = createOutboxPubSub();
 const modelCatalogService = createEnvironmentChatModelCatalogService();
 const llmService = createAiSdkChatLlmService();
 const messageService = createDrizzleChatMessageService(db);
-const runService = createDrizzleChatRunService(db, pubsub);
-const runLoopEventService = createDrizzleRunLoopEventService(db, pubsub);
+const runService = createDrizzleChatRunService(db, runPubsub);
+const runLoopEventService = createDrizzleRunLoopEventService(db, runPubsub);
 const ingressService = createDrizzleChatIngressService(db, outboxPubsub);
 const outboxService = createDrizzleOutboxService(db, outboxPubsub);
 const outboxPublisher = new OutboxPublisher({
@@ -61,7 +61,7 @@ const app = createApp({
   runService,
   modelCatalogService,
   runLoopEventService,
-  pubsub,
+  pubsub: runPubsub,
 });
 
 const server = Bun.serve({
