@@ -5,7 +5,7 @@ import type { OutboxPubSub } from "../services/events/outbox-pubsub";
 interface OutboxPublisherOptions {
   outboxService: OutboxService;
   publisher: EventPublisher;
-  pubsub?: OutboxPubSub;
+  pubsub: OutboxPubSub;
   batchSize?: number;
   logger?: Pick<Console, "info" | "error">;
 }
@@ -13,7 +13,7 @@ interface OutboxPublisherOptions {
 export class OutboxPublisher {
   private readonly outboxService: OutboxService;
   private readonly publisher: EventPublisher;
-  private readonly pubsub?: OutboxPubSub;
+  private readonly pubsub: OutboxPubSub;
   private readonly batchSize: number;
   private readonly logger: Pick<Console, "info" | "error">;
   private isRunning = false;
@@ -36,15 +36,11 @@ export class OutboxPublisher {
 
     this.isRunning = true;
 
-    if (this.pubsub) {
-      this.unsubscribe = this.pubsub.subscribe(() => {
-        this.triggerProcessing();
-      });
-      // Initial trigger in case events were created before start
+    this.unsubscribe = this.pubsub.subscribe(() => {
       this.triggerProcessing();
-    } else {
-      void this.poll();
-    }
+    });
+    // Initial trigger in case events were created before start
+    this.triggerProcessing();
   }
 
   public stop() {
@@ -119,20 +115,5 @@ export class OutboxPublisher {
     }
 
     return events.length;
-  }
-
-  private async poll() {
-    while (this.isRunning) {
-      try {
-        const processed = await this.processOnce();
-        if (processed === 0) {
-          await Bun.sleep(250);
-        }
-      } catch (error) {
-        this.logger.error("outbox.poll.error", {
-          error: error instanceof Error ? error.message : "unknown",
-        });
-      }
-    }
   }
 }

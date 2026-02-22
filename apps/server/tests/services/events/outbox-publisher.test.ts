@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { OutboxPublisher } from "../../../src/events/outbox-publisher";
 import { createInMemoryOutboxService } from "../../../src/services/events/outbox-service";
 import { EVENT_TYPE, type AgentEvent, type EventPublisher } from "../../../src/events/types";
+import { createOutboxPubSub } from "../../../src/services/events/outbox-pubsub";
 
 const createRequestedEvent = (id: string): AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED> => {
   return {
@@ -20,7 +21,8 @@ const createRequestedEvent = (id: string): AgentEvent<typeof EVENT_TYPE.AGENT_RU
 
 describe("OutboxPublisher", () => {
   test("publishes pending outbox events and marks them published", async () => {
-    const outboxService = createInMemoryOutboxService();
+    const pubsub = createOutboxPubSub();
+    const outboxService = createInMemoryOutboxService(pubsub);
     const publishedEvents: AgentEvent[] = [];
     const publisher: EventPublisher = {
       publish: async (event) => {
@@ -34,6 +36,7 @@ describe("OutboxPublisher", () => {
     const worker = new OutboxPublisher({
       outboxService,
       publisher,
+      pubsub,
       logger: { info: () => {}, error: () => {} },
     });
 
@@ -51,7 +54,8 @@ describe("OutboxPublisher", () => {
   });
 
   test("marks failed publish as retryable and increments attempts", async () => {
-    const outboxService = createInMemoryOutboxService();
+    const pubsub = createOutboxPubSub();
+    const outboxService = createInMemoryOutboxService(pubsub);
     const publisher: EventPublisher = {
       publish: async () => {
         throw new Error("redis unavailable");
@@ -64,6 +68,7 @@ describe("OutboxPublisher", () => {
     const worker = new OutboxPublisher({
       outboxService,
       publisher,
+      pubsub,
       logger: { info: () => {}, error: () => {} },
     });
 
