@@ -1,6 +1,7 @@
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { messages, outboxEvents, runs, threads, type Schema } from "../../../db/schema";
 import { EVENT_TYPE, type AgentEvent } from "../../events/types";
+import type { OutboxPubSub } from "../events/outbox-pubsub";
 
 interface CreateIncomingMessageAndQueueRunInput {
   threadId: string;
@@ -25,7 +26,10 @@ export interface ChatIngressService {
   ): Promise<PersistedIngressRecord>;
 }
 
-export const createDrizzleChatIngressService = (database: LibSQLDatabase<Schema>) => {
+export const createDrizzleChatIngressService = (
+  database: LibSQLDatabase<Schema>,
+  pubsub?: OutboxPubSub,
+) => {
   const createIncomingMessageAndQueueRun = async (input: CreateIncomingMessageAndQueueRunInput) => {
     const messageId = crypto.randomUUID();
     const event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED> = {
@@ -77,6 +81,8 @@ export const createDrizzleChatIngressService = (database: LibSQLDatabase<Schema>
         publishedAt: undefined,
       });
     });
+
+    pubsub?.publish({ type: "outbox.event_created" });
 
     return {
       messageId,

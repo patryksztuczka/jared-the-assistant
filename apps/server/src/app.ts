@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { createId } from "@paralleldrive/cuid2";
 import {
   createInMemoryChatMessageService,
@@ -12,6 +13,7 @@ import {
 } from "./services/chat/model-catalog-service";
 import { EVENT_TYPE, parseCreateChatMessageRequest, type EventPublisher } from "./events/types";
 import type { RunLoopEventService } from "./services/chat/loop-event-service";
+import type { ChatRunPubSub } from "./services/chat/run-pubsub";
 
 interface CreateAppOptions {
   publisher?: EventPublisher;
@@ -20,12 +22,14 @@ interface CreateAppOptions {
   runService?: ChatRunService;
   modelCatalogService?: ChatModelCatalogService;
   runLoopEventService?: RunLoopEventService;
+  pubsub?: ChatRunPubSub;
 }
 
 export const createApp = (options: CreateAppOptions) => {
   const app = new Hono();
+  const pubsub = options.pubsub;
   const messageService = options.messageService ?? createInMemoryChatMessageService();
-  const runService = options.runService ?? createInMemoryChatRunService();
+  const runService = options.runService ?? createInMemoryChatRunService(pubsub);
   const ingressService = options.ingressService;
   const runLoopEventService = options.runLoopEventService;
   const modelCatalogService =
@@ -190,6 +194,117 @@ export const createApp = (options: CreateAppOptions) => {
     return c.json({
       ok: true,
       events,
+    });
+  });
+
+  app.get("/api/chat/runs/:runId/stream", async (c) => {
+    const runId = c.req.param("runId");
+    if (!runIdPattern.test(runId)) {
+      return c.json(
+        {
+          ok: false,
+          error: "Invalid runId. Expected format: run_<24 lowercase alphanumerics>",
+        },
+        400,
+      );
+    }
+
+    if (!pubsub) {
+      return c.json(
+        {
+          ok: false,
+          error: "Streaming is not configured on this server.",
+        },
+        500,
+      );
+    }
+
+    return streamSSE(c, async (stream) => {
+      const seenEventIds = new Set<string>();
+
+      // Send existing events
+      const existingEvents = runLoopEventService
+        ? await runLoopEventService.listByRunId(runId)
+        : [];
+      for (const event of existingEvents) {
+        seenEventIds.add(event.id);
+        await stream.writeSSE({
+          event: "run.event",
+          data: JSON.stringify(event),
+          id: event.id,
+        });
+      }
+
+      // Check existing status
+      const existingRun = await runService.getRunById(runId);
+      if (existingRun && (existingRun.status === "completed" || existingRun.status === "failed")) {
+        await stream.writeSSE({
+          event: "run.status",
+          data: JSON.stringify(existingRun),
+        });
+
+        if (existingRun.status === "completed") {
+          const messages = await messageService.listMessagesByThreadId(existingRun.threadId);
+          const reply = messages.toReversed().find((message) => {
+            return (
+              message.role === "assistant" && message.correlationId === existingRun.correlationId
+            );
+          });
+          if (reply) {
+            await stream.writeSSE({
+              event: "run.reply",
+              data: JSON.stringify({ content: reply.content }),
+            });
+          }
+        }
+        return;
+      }
+
+      // Subscribe to new events
+      let unsubscribe: (() => void) | undefined;
+
+      const finished = new Promise<void>((resolve) => {
+        stream.onAbort(() => resolve());
+
+        unsubscribe = pubsub.subscribe(runId, async (event) => {
+          if (event.type === "run.event") {
+            if (seenEventIds.has(event.data.id)) return;
+            seenEventIds.add(event.data.id);
+            await stream.writeSSE({
+              event: "run.event",
+              data: JSON.stringify(event.data),
+              id: event.data.id,
+            });
+          } else if (event.type === "run.status") {
+            await stream.writeSSE({
+              event: "run.status",
+              data: JSON.stringify(event.data),
+            });
+
+            if (event.data.status === "completed" || event.data.status === "failed") {
+              if (event.data.status === "completed") {
+                const messages = await messageService.listMessagesByThreadId(event.data.threadId);
+                const reply = messages.toReversed().find((message) => {
+                  return (
+                    message.role === "assistant" &&
+                    message.correlationId === event.data.correlationId
+                  );
+                });
+                if (reply) {
+                  await stream.writeSSE({
+                    event: "run.reply",
+                    data: JSON.stringify({ content: reply.content }),
+                  });
+                }
+              }
+              resolve();
+            }
+          }
+        });
+      });
+
+      await finished;
+      unsubscribe?.();
     });
   });
 

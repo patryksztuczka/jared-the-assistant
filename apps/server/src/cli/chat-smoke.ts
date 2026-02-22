@@ -11,32 +11,10 @@ interface ChatMessageAcceptedResponse {
   correlationId: string;
 }
 
-interface RunStatusResponse {
-  ok: true;
-  run: {
-    status: RunStatus;
-    safeError?: string;
-  };
-}
-
-interface RunEventsResponse {
-  ok: true;
-  events: RunLoopEventRecord[];
-}
-
 interface RunLoopEventRecord {
   id: string;
   eventType: string;
   payload: unknown;
-}
-
-interface ThreadMessagesResponse {
-  ok: true;
-  messages: Array<{
-    role: "user" | "assistant" | "system";
-    correlationId: string;
-    content: string;
-  }>;
 }
 
 interface CliConfig {
@@ -60,11 +38,6 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
 
 const config = parseArgs(process.argv);
-
-const sleep = (milliseconds: number) =>
-  new Promise<void>((resolve) => {
-    setTimeout(resolve, milliseconds);
-  });
 
 const run = async () => {
   let activeThreadId = config.threadId;
@@ -103,47 +76,22 @@ const run = async () => {
     activeThreadId = accepted.threadId;
 
     console.log(`Run accepted: ${accepted.runId}`);
-    const seenEventIds = new Set<string>();
-    const finalStatus = await waitForRunCompletion({
+    const streamStatus = await waitForRunStream({
       baseUrl: config.baseUrl,
       runId: accepted.runId,
-      timeoutMs: config.timeoutMs,
-      pollIntervalMs: config.pollIntervalMs,
-      onPoll: async () => {
-        const events = await getRunEvents(config.baseUrl, accepted.runId);
-        for (const event of events) {
-          if (seenEventIds.has(event.id)) {
-            continue;
-          }
-
-          seenEventIds.add(event.id);
-          const mapped = mapEventForDisplay(event);
-          if (!mapped) {
-            continue;
-          }
-
-          console.log(mapped);
-        }
-      },
     });
 
-    if (finalStatus.status === "failed") {
-      console.log(`Assistant run failed: ${finalStatus.safeError ?? "Unknown error"}`);
+    if (streamStatus.status === "failed") {
+      console.log(`Assistant run failed: ${streamStatus.safeError ?? "Unknown error"}`);
       continue;
     }
 
-    const reply = await getAssistantReply({
-      baseUrl: config.baseUrl,
-      threadId: accepted.threadId,
-      correlationId: accepted.correlationId,
-    });
-
-    if (!reply) {
+    if (!streamStatus.reply) {
       console.log("Assistant: (no reply message found yet)");
       continue;
     }
 
-    console.log(`Assistant: ${reply}`);
+    console.log(`Assistant: ${streamStatus.reply}`);
   }
 };
 
@@ -211,85 +159,80 @@ const sendMessage = async (inputData: {
   return payload as ChatMessageAcceptedResponse;
 };
 
-const waitForRunCompletion = async (inputData: {
-  baseUrl: string;
-  runId: string;
-  timeoutMs: number;
-  pollIntervalMs: number;
-  onPoll: () => Promise<void>;
-}) => {
-  const startTime = Date.now();
+const waitForRunStream = async (inputData: { baseUrl: string; runId: string }) => {
+  const response = await fetch(`${inputData.baseUrl}/api/chat/runs/${inputData.runId}/stream`);
+  if (!response.ok) {
+    throw new Error(`Failed to stream run status (${response.status})`);
+  }
 
-  while (Date.now() - startTime < inputData.timeoutMs) {
-    await inputData.onPoll();
-    const run = await getRunStatus(inputData.baseUrl, inputData.runId);
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("No response body available to read stream");
+  }
 
-    if (run.status === "completed" || run.status === "failed") {
-      return run;
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalStatus: RunStatus = "processing";
+  let safeError: string | undefined;
+  let reply: string | undefined;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
     }
 
-    await sleep(inputData.pollIntervalMs);
+    buffer += decoder.decode(value, { stream: true });
+
+    let newlineIndex: number;
+    while ((newlineIndex = buffer.indexOf("\n\n")) >= 0) {
+      const chunk = buffer.slice(0, newlineIndex);
+      buffer = buffer.slice(newlineIndex + 2);
+
+      const lines = chunk.split("\n");
+      let eventType = "message";
+      let eventData = "";
+
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7);
+        } else if (line.startsWith("data: ")) {
+          eventData = line.slice(6);
+        }
+      }
+
+      if (!eventData) {
+        continue;
+      }
+
+      try {
+        const payload = JSON.parse(eventData);
+
+        switch (eventType) {
+          case "run.event": {
+            const mapped = mapEventForDisplay(payload as RunLoopEventRecord);
+            if (mapped) {
+              console.log(mapped);
+            }
+            break;
+          }
+          case "run.status": {
+            finalStatus = payload.status;
+            safeError = payload.safeError;
+            break;
+          }
+          case "run.reply": {
+            reply = payload.content;
+            break;
+          }
+        }
+      } catch (error) {
+        console.error("Failed to parse SSE event data:", error);
+      }
+    }
   }
 
-  throw new Error(`Timed out waiting for run ${inputData.runId} after ${inputData.timeoutMs}ms`);
-};
-
-const getRunStatus = async (baseUrl: string, runId: string) => {
-  const response = await fetch(`${baseUrl}/api/chat/runs/${runId}`);
-  if (!response.ok) {
-    const errorPayload = await response.text();
-    throw new Error(`Failed to fetch run status (${response.status}): ${errorPayload}`);
-  }
-
-  const payload = (await response.json()) as Partial<RunStatusResponse>;
-  if (!payload.run?.status) {
-    throw new Error("Invalid /api/chat/runs/:runId response shape");
-  }
-
-  return {
-    status: payload.run.status,
-    safeError: payload.run.safeError,
-  };
-};
-
-const getAssistantReply = async (inputData: {
-  baseUrl: string;
-  threadId: string;
-  correlationId: string;
-}) => {
-  const response = await fetch(
-    `${inputData.baseUrl}/api/chat/threads/${inputData.threadId}/messages`,
-  );
-  if (!response.ok) {
-    const errorPayload = await response.text();
-    throw new Error(`Failed to fetch thread history (${response.status}): ${errorPayload}`);
-  }
-
-  const payload = (await response.json()) as Partial<ThreadMessagesResponse>;
-  if (!payload.messages) {
-    throw new Error("Invalid /api/chat/threads/:threadId/messages response shape");
-  }
-
-  const reply = payload.messages.toReversed().find((message) => {
-    return message.role === "assistant" && message.correlationId === inputData.correlationId;
-  });
-
-  return reply?.content;
-};
-
-const getRunEvents = async (baseUrl: string, runId: string) => {
-  const response = await fetch(`${baseUrl}/api/chat/runs/${runId}/events`);
-  if (!response.ok) {
-    const errorPayload = await response.text();
-    throw new Error(`Failed to fetch run events (${response.status}): ${errorPayload}`);
-  }
-
-  const payload = (await response.json()) as Partial<RunEventsResponse>;
-  if (!payload.events) {
-    throw new Error("Invalid /api/chat/runs/:runId/events response shape");
-  }
-
-  return payload.events;
+  return { status: finalStatus, safeError, reply };
 };
 
 const mapEventForDisplay = (event: RunLoopEventRecord) => {

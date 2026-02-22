@@ -1,6 +1,7 @@
 import { asc, eq } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { runLoopEvents, type Schema } from "../../../db/schema";
+import type { ChatRunPubSub } from "./run-pubsub";
 
 export type AgentLoopStopReason = "success" | "error";
 
@@ -35,13 +36,29 @@ const parsePayload = (value: string): unknown => {
   }
 };
 
-export const createDrizzleRunLoopEventService = (database: LibSQLDatabase<Schema>) => {
+export const createDrizzleRunLoopEventService = (
+  database: LibSQLDatabase<Schema>,
+  pubsub?: ChatRunPubSub,
+) => {
   const appendEvent = async (input: AppendRunLoopEventInput) => {
-    await database.insert(runLoopEvents).values({
+    const record = {
       id: crypto.randomUUID(),
       runId: input.runId,
       eventType: input.eventType,
       payload: JSON.stringify(input.payload),
+    };
+
+    await database.insert(runLoopEvents).values(record);
+
+    pubsub?.publish(input.runId, {
+      type: "run.event",
+      data: {
+        id: record.id,
+        runId: record.runId,
+        eventType: record.eventType,
+        payload: input.payload,
+        createdAt: new Date().toISOString(),
+      },
     });
   };
 
@@ -75,16 +92,22 @@ export const createDrizzleRunLoopEventService = (database: LibSQLDatabase<Schema
   } satisfies RunLoopEventService;
 };
 
-export const createInMemoryRunLoopEventService = () => {
+export const createInMemoryRunLoopEventService = (pubsub?: ChatRunPubSub) => {
   const records = new Array<RunLoopEventRecord>();
 
   const appendEvent = async (input: AppendRunLoopEventInput) => {
-    records.push({
+    const record: RunLoopEventRecord = {
       id: crypto.randomUUID(),
       runId: input.runId,
       eventType: input.eventType,
       payload: input.payload,
       createdAt: new Date().toISOString(),
+    };
+    records.push(record);
+
+    pubsub?.publish(input.runId, {
+      type: "run.event",
+      data: record,
     });
   };
 

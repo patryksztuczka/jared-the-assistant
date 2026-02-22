@@ -8,8 +8,10 @@ import { createAiSdkChatLlmService } from "./services/chat/llm-service";
 import { createEnvironmentChatModelCatalogService } from "./services/chat/model-catalog-service";
 import { OutboxPublisher } from "./events/outbox-publisher";
 import { createDrizzleOutboxService } from "./services/events/outbox-service";
+import { createOutboxPubSub } from "./services/events/outbox-pubsub";
 import { RedisStreamBus } from "./events/redis-stream";
 import { AgentRuntime } from "./agent/runtime";
+import { createChatRunPubSub } from "./services/chat/run-pubsub";
 import { db } from "../db";
 
 const port = Number(process.env.PORT ?? 3000);
@@ -23,16 +25,19 @@ const redis = new Redis(redisUrl);
 const bus = new RedisStreamBus(redis, {
   streamKey: redisStreamKey,
 });
+const pubsub = createChatRunPubSub();
+const outboxPubsub = createOutboxPubSub();
 const modelCatalogService = createEnvironmentChatModelCatalogService();
 const llmService = createAiSdkChatLlmService();
 const messageService = createDrizzleChatMessageService(db);
-const runService = createDrizzleChatRunService(db);
-const runLoopEventService = createDrizzleRunLoopEventService(db);
-const ingressService = createDrizzleChatIngressService(db);
-const outboxService = createDrizzleOutboxService(db);
+const runService = createDrizzleChatRunService(db, pubsub);
+const runLoopEventService = createDrizzleRunLoopEventService(db, pubsub);
+const ingressService = createDrizzleChatIngressService(db, outboxPubsub);
+const outboxService = createDrizzleOutboxService(db, outboxPubsub);
 const outboxPublisher = new OutboxPublisher({
   outboxService,
   publisher: bus,
+  pubsub: outboxPubsub,
 });
 const runtime = new AgentRuntime({
   bus,
@@ -56,6 +61,7 @@ const app = createApp({
   runService,
   modelCatalogService,
   runLoopEventService,
+  pubsub,
 });
 
 const server = Bun.serve({

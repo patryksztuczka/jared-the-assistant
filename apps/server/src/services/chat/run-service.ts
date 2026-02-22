@@ -2,6 +2,8 @@ import { eq } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { runs, threads, type Schema } from "../../../db/schema";
 
+import type { ChatRunPubSub } from "./run-pubsub";
+
 export type RunStatus = "queued" | "processing" | "completed" | "failed";
 
 export interface ChatRun {
@@ -32,7 +34,10 @@ export interface ChatRunService {
   getRunById(runId: string): Promise<ChatRun | undefined>;
 }
 
-export const createDrizzleChatRunService = (database: LibSQLDatabase<Schema>) => {
+export const createDrizzleChatRunService = (
+  database: LibSQLDatabase<Schema>,
+  pubsub?: ChatRunPubSub,
+) => {
   const createQueuedRun = async (input: CreateQueuedRunInput) => {
     await database
       .insert(threads)
@@ -56,6 +61,7 @@ export const createDrizzleChatRunService = (database: LibSQLDatabase<Schema>) =>
       throw new Error("Failed to create queued run");
     }
 
+    pubsub?.publish(run.id, { type: "run.status", data: run });
     return run;
   };
 
@@ -71,7 +77,11 @@ export const createDrizzleChatRunService = (database: LibSQLDatabase<Schema>) =>
       })
       .where(eq(runs.id, input.runId));
 
-    return getRunById(input.runId);
+    const run = await getRunById(input.runId);
+    if (run) {
+      pubsub?.publish(run.id, { type: "run.status", data: run });
+    }
+    return run;
   };
 
   const getRunById = async (runId: string) => {
@@ -112,7 +122,7 @@ export const createDrizzleChatRunService = (database: LibSQLDatabase<Schema>) =>
   } satisfies ChatRunService;
 };
 
-export const createInMemoryChatRunService = () => {
+export const createInMemoryChatRunService = (pubsub?: ChatRunPubSub) => {
   const records = new Map<string, ChatRun>();
 
   const createQueuedRun = async (input: CreateQueuedRunInput) => {
@@ -128,6 +138,7 @@ export const createInMemoryChatRunService = () => {
     };
 
     records.set(run.id, run);
+    pubsub?.publish(run.id, { type: "run.status", data: run });
     return run;
   };
 
@@ -145,6 +156,7 @@ export const createInMemoryChatRunService = () => {
     };
 
     records.set(input.runId, next);
+    pubsub?.publish(next.id, { type: "run.status", data: next });
     return next;
   };
 

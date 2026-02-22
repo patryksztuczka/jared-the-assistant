@@ -1,9 +1,11 @@
 import type { EventPublisher } from "./types";
 import type { OutboxService } from "../services/events/outbox-service";
+import type { OutboxPubSub } from "../services/events/outbox-pubsub";
 
 interface OutboxPublisherOptions {
   outboxService: OutboxService;
   publisher: EventPublisher;
+  pubsub?: OutboxPubSub;
   batchSize?: number;
   logger?: Pick<Console, "info" | "error">;
 }
@@ -11,13 +13,18 @@ interface OutboxPublisherOptions {
 export class OutboxPublisher {
   private readonly outboxService: OutboxService;
   private readonly publisher: EventPublisher;
+  private readonly pubsub?: OutboxPubSub;
   private readonly batchSize: number;
   private readonly logger: Pick<Console, "info" | "error">;
   private isRunning = false;
+  private isProcessing = false;
+  private shouldProcessAgain = false;
+  private unsubscribe?: () => void;
 
   public constructor(options: OutboxPublisherOptions) {
     this.outboxService = options.outboxService;
     this.publisher = options.publisher;
+    this.pubsub = options.pubsub;
     this.batchSize = options.batchSize ?? 10;
     this.logger = options.logger ?? console;
   }
@@ -28,11 +35,60 @@ export class OutboxPublisher {
     }
 
     this.isRunning = true;
-    void this.poll();
+
+    if (this.pubsub) {
+      this.unsubscribe = this.pubsub.subscribe(() => {
+        this.triggerProcessing();
+      });
+      // Initial trigger in case events were created before start
+      this.triggerProcessing();
+    } else {
+      void this.poll();
+    }
   }
 
   public stop() {
     this.isRunning = false;
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = undefined;
+    }
+  }
+
+  private triggerProcessing() {
+    if (!this.isRunning) {
+      return;
+    }
+
+    if (this.isProcessing) {
+      this.shouldProcessAgain = true;
+      return;
+    }
+
+    void this.processQueue();
+  }
+
+  private async processQueue() {
+    this.isProcessing = true;
+    this.shouldProcessAgain = false;
+
+    try {
+      const processed = await this.processOnce();
+      if (processed === this.batchSize) {
+        // If we processed a full batch, there might be more events waiting
+        this.shouldProcessAgain = true;
+      }
+    } catch (error) {
+      this.logger.error("outbox.process.error", {
+        error: error instanceof Error ? error.message : "unknown",
+      });
+    } finally {
+      this.isProcessing = false;
+
+      if (this.shouldProcessAgain && this.isRunning) {
+        this.triggerProcessing();
+      }
+    }
   }
 
   public async processOnce() {

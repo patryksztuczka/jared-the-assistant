@@ -2,6 +2,7 @@ import { asc, eq, inArray } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { outboxEvents, type Schema } from "../../../db/schema";
 import type { AgentEvent } from "../../events/types";
+import type { OutboxPubSub } from "./outbox-pubsub";
 
 export type OutboxStatus = "pending" | "published" | "failed";
 
@@ -29,7 +30,10 @@ export interface OutboxService {
 
 const RETRYABLE_STATUSES: OutboxStatus[] = ["pending", "failed"];
 
-export const createDrizzleOutboxService = (database: LibSQLDatabase<Schema>) => {
+export const createDrizzleOutboxService = (
+  database: LibSQLDatabase<Schema>,
+  pubsub?: OutboxPubSub,
+) => {
   const createPendingEvent = async (input: CreateOutboxEventInput) => {
     await database.insert(outboxEvents).values({
       id: input.event.id,
@@ -40,6 +44,8 @@ export const createDrizzleOutboxService = (database: LibSQLDatabase<Schema>) => 
       lastError: undefined,
       publishedAt: undefined,
     });
+
+    pubsub?.publish({ type: "outbox.event_created" });
   };
 
   const listRetryableEvents = async (limit: number) => {
@@ -115,7 +121,7 @@ export const createDrizzleOutboxService = (database: LibSQLDatabase<Schema>) => 
   } satisfies OutboxService;
 };
 
-export const createInMemoryOutboxService = () => {
+export const createInMemoryOutboxService = (pubsub?: OutboxPubSub) => {
   const records = new Map<string, OutboxEventRecord>();
 
   const createPendingEvent = async (input: CreateOutboxEventInput) => {
@@ -130,6 +136,8 @@ export const createInMemoryOutboxService = () => {
       createdAt: now,
       updatedAt: now,
     });
+
+    pubsub?.publish({ type: "outbox.event_created" });
   };
 
   const listRetryableEvents = async (limit: number) => {
