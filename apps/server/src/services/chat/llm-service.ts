@@ -9,7 +9,6 @@ interface GenerateAssistantResponseInput {
 
 const assistantResponseSchema = z.object({
   action: z.enum(["continue", "finish", "ask_clarification"]),
-  reasoning: z.string().min(1).nullable(),
   response: z.string().min(1).nullable(),
 });
 
@@ -20,10 +19,12 @@ export interface LlmService {
 }
 
 const generateAssistantResponseWithAiSdk = async (input: GenerateAssistantResponseInput) => {
+  console.log("Calling LLM...");
   const result = await generateText({
     model: openai(input.model),
     messages: input.messages,
     output: Output.object({ schema: assistantResponseSchema }),
+    experimental_telemetry: { isEnabled: true },
   });
 
   return result.output;

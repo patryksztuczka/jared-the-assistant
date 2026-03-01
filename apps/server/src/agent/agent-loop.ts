@@ -61,17 +61,13 @@ export class AgentLoop {
       let output: AssistantResponse | undefined;
       let iterationsCalled = 0;
 
-      while (iterationsCalled < this.maxIterations) {
+      do {
         output = await this.llmService.generateAssistantResponse({
           model: this.model,
           messages: [...recentMessages, input.message],
         });
 
         iterationsCalled += 1;
-
-        if (output.action === "finish") {
-          break;
-        }
 
         await this.messageService.createAssistantMessage({
           threadId: input.threadId,
@@ -82,51 +78,26 @@ export class AgentLoop {
           role: "assistant",
           content: output.response ?? "No content",
         });
-      }
+      } while (iterationsCalled < this.maxIterations && output.action === "continue");
 
       if (!output) {
         throw new Error("Loop finished without assistant output");
       }
 
-      if (output.action === "finish") {
-        await this.messageService.createAssistantMessage({
-          threadId: input.threadId,
-          content: output.response ?? "No content",
-        });
-
-        await this.emitEvent({
-          runId: input.runId,
-          eventType: "loop.completed",
-          payload: {
-            output,
-            iterationsCalled,
-          },
-        });
-
-        return {
-          output,
-          reason: "success" as const,
-        } satisfies AgentLoopRunResult;
-      }
-
-      await this.messageService.createAssistantMessage({
-        threadId: input.threadId,
-        content: output.response ?? "No content",
-      });
+      const loopStopReason = output.action === "finish" ? "success" : "max_iterations_reached";
 
       await this.emitEvent({
         runId: input.runId,
         eventType: "loop.completed",
         payload: {
           output,
-          iterationsCalled,
-          reason: "max_iterations_reached",
+          reason: loopStopReason,
         },
       });
 
       return {
         output,
-        reason: "max_iterations_reached" as const,
+        reason: loopStopReason,
       } satisfies AgentLoopRunResult;
     } catch (error) {
       const safeError = error instanceof Error ? error.message : "unknown";
@@ -134,7 +105,7 @@ export class AgentLoop {
       await this.emitEvent({
         runId: input.runId,
         eventType: "loop.error",
-        payload: { error: safeError },
+        payload: { error: safeError, reason: "error" },
       });
 
       return {

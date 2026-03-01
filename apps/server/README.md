@@ -117,7 +117,6 @@ Optional environment variables:
 - `REDIS_CONSUMER_NAME` (default `worker-<pid>`)
 - `OPENAI_API_KEY` (required for real LLM responses)
 - `CHAT_ALLOWED_MODELS` (optional comma-separated allow list; when empty, any model id is allowed)
-- `CHAT_DEFAULT_MODEL` (default selected model; default `gpt-4o-mini`)
 - `CHAT_SUMMARY_MODEL` (optional model for summary memory generation)
 - `CHAT_MEMORY_RECENT_MESSAGES` (count of recent messages kept verbatim; default `8`)
 - `AGENT_MAX_LOOP_ITERATIONS` (maximum iterations per run; default `1`)

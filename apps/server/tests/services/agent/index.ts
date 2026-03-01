@@ -1,4 +1,7 @@
 import Redis from "ioredis";
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { LangfuseSpanProcessor } from "@langfuse/otel";
+
 import { createApp } from "./app";
 import { createDrizzleChatIngressService } from "./services/chat/ingress-service";
 import { createDrizzleChatMessageService } from "./services/chat/message-service";
@@ -18,6 +21,12 @@ const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 const redisStreamKey = process.env.REDIS_STREAM_KEY ?? "agent_events";
 const redisConsumerGroup = process.env.REDIS_CONSUMER_GROUP ?? "agent_runtime";
 const redisConsumerName = process.env.REDIS_CONSUMER_NAME ?? `worker-${process.pid}`;
+
+const sdk = new NodeSDK({
+  spanProcessors: [new LangfuseSpanProcessor()],
+});
+
+sdk.start();
 
 const redis = new Redis(redisUrl);
 const bus = new RedisStreamBus(redis, {
