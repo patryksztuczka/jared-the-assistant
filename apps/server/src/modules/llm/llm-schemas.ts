@@ -4,6 +4,8 @@ import type { AssistantModelMessage, ModelMessage, ToolModelMessage } from "ai";
 export interface GenerateAssistantResponseInput {
   model: string;
   messages: ModelMessage[];
+  onTextDelta?: (delta: string) => Promise<void> | void;
+  onToolCall?: (toolName: string) => Promise<void> | void;
 }
 
 export const assistantLlmOutputSchema = z.object({

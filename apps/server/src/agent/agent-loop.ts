@@ -11,6 +11,7 @@ interface CreateAgentLoopOptions {
 interface RunAgentLoopInput {
   runId: string;
   threadId: string;
+  model?: string;
   messages: ModelMessage[];
 }
 
@@ -22,6 +23,24 @@ export type AgentLoopEvent =
       payload: {
         runId: string;
         threadId: string;
+      };
+    }
+  | {
+      type: "assistant.token";
+      payload: {
+        runId: string;
+        threadId: string;
+        iteration: number;
+        delta: string;
+      };
+    }
+  | {
+      type: "tool.called";
+      payload: {
+        runId: string;
+        threadId: string;
+        iteration: number;
+        toolName: string;
       };
     }
   | {
@@ -85,14 +104,38 @@ export class AgentLoop {
 
     try {
       const promptMessages = [...input.messages];
+      const model = input.model ?? this.model;
 
       let output: AssistantResponse | undefined;
       let iterationsCalled = 0;
 
       do {
+        const iteration = iterationsCalled + 1;
         output = await this.llmService.generateAssistantResponse({
-          model: this.model,
+          model,
           messages: promptMessages,
+          onTextDelta: async (delta) => {
+            await onEvent?.({
+              type: "assistant.token",
+              payload: {
+                runId: input.runId,
+                threadId: input.threadId,
+                iteration,
+                delta,
+              },
+            });
+          },
+          onToolCall: async (toolName) => {
+            await onEvent?.({
+              type: "tool.called",
+              payload: {
+                runId: input.runId,
+                threadId: input.threadId,
+                iteration,
+                toolName,
+              },
+            });
+          },
         });
 
         iterationsCalled += 1;

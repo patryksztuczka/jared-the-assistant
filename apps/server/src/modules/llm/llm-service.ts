@@ -1,7 +1,7 @@
 import { openai } from "@ai-sdk/openai";
 import {
   Output,
-  generateText,
+  streamText,
   type AssistantModelMessage,
   type ModelMessage,
   type ToolModelMessage,
@@ -24,22 +24,62 @@ export class AiSdkLlmService implements LlmService {
 
   async generateAssistantResponse(input: GenerateAssistantResponseInput) {
     const messages = await this.buildPromptMessages(input.messages);
+    const reportedToolCallIds = new Set<string>();
 
-    console.log("Calling LLM...");
-    const result = await generateText({
+    const result = streamText({
       model: openai(input.model),
       messages,
       output: Output.object({ schema: assistantLlmOutputSchema }),
       tools: this.tools,
       experimental_telemetry: { isEnabled: true },
+      onChunk: async ({ chunk }) => {
+        if (chunk.type !== "tool-call") {
+          return;
+        }
+
+        if (reportedToolCallIds.has(chunk.toolCallId)) {
+          return;
+        }
+
+        reportedToolCallIds.add(chunk.toolCallId);
+        await input.onToolCall?.(chunk.toolName);
+      },
     });
 
-    const toolResult = result.toolResults.at(0);
+    let streamedResponse = "";
+    for await (const partialOutput of result.partialOutputStream) {
+      const partialResponse = this.getPartialResponseText(partialOutput);
+      if (!partialResponse || partialResponse.length <= streamedResponse.length) {
+        continue;
+      }
+
+      const delta = partialResponse.slice(streamedResponse.length);
+      streamedResponse = partialResponse;
+      await input.onTextDelta?.(delta);
+    }
+
+    const toolResults = await result.toolResults;
+    const toolResult = toolResults.at(0);
     if (toolResult) {
       return this.buildToolActionResponse(toolResult);
     }
 
-    return this.buildAssistantActionResponse(result.output.action, result.output.response);
+    const output = await result.output;
+
+    return this.buildAssistantActionResponse(output.action, output.response);
+  }
+
+  private getPartialResponseText(partialOutput: unknown) {
+    if (!partialOutput || typeof partialOutput !== "object") {
+      return;
+    }
+
+    const response = (partialOutput as { response?: unknown }).response;
+    if (typeof response !== "string") {
+      return;
+    }
+
+    return response;
   }
 
   private async buildPromptMessages(messages: ModelMessage[]) {

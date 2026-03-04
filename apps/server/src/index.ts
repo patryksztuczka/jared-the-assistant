@@ -8,6 +8,7 @@ import { DrizzleRunService } from "./modules/runs/runs-service";
 import { AiSdkLlmService } from "./modules/llm/llm-service";
 import { RedisStreamBus } from "./event-bus/redis-stream";
 import { AgentRuntime } from "./agent/runtime";
+import { InMemoryRunStreamService } from "./agent/run-stream-service";
 import { db } from "../db";
 
 const port = Number(process.env.PORT ?? 3000);
@@ -29,12 +30,14 @@ const eventBus = new RedisStreamBus(redis, {
 const llmService = new AiSdkLlmService();
 const messageService = DrizzleMessageService.fromDatabase(db);
 const runService = DrizzleRunService.fromDatabase(db);
+const runStreamService = new InMemoryRunStreamService();
 
 const runtime = new AgentRuntime({
   eventBus,
   messageService,
   runService,
   llmService,
+  runStreamService,
   consumerGroup: redisConsumerGroup,
   consumerName: redisConsumerName,
   model: "gpt-5-nano",
@@ -49,6 +52,7 @@ const app = createApp({
   messageService,
   eventBus,
   runService,
+  runStreamService,
 });
 
 const server = Bun.serve({

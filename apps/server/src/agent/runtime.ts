@@ -4,6 +4,11 @@ import type { RunService, RunStatus } from "../modules/runs/runs-schemas";
 import type { AssistantModelMessage, ToolModelMessage } from "ai";
 import { AgentLoop } from "./agent-loop";
 import {
+  RUN_STREAM_EVENT_TYPE,
+  type RunStreamEvent,
+  type RunStreamService,
+} from "./run-stream-service";
+import {
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_MODEL,
   DEFAULT_RECENT_MESSAGES_COUNT,
@@ -21,6 +26,7 @@ interface AgentRuntimeOptions {
   model?: string;
   recentMessageCount?: number;
   maxIterations?: number;
+  runStreamService?: RunStreamService;
   logger?: Pick<Console, "info" | "error">;
 }
 
@@ -31,6 +37,7 @@ export class AgentRuntime {
   private readonly consumerGroup: string;
   private readonly consumerName: string;
   private readonly agentLoop: AgentLoop;
+  private readonly runStreamService?: RunStreamService;
   private readonly logger: Pick<Console, "info" | "error">;
   private isRunning = false;
 
@@ -40,6 +47,7 @@ export class AgentRuntime {
     this.runService = options.runService;
     this.consumerGroup = options.consumerGroup;
     this.consumerName = options.consumerName;
+    this.runStreamService = options.runStreamService;
     this.logger = options.logger ?? console;
 
     const model = options.model ?? DEFAULT_MODEL;
@@ -109,9 +117,25 @@ export class AgentRuntime {
 
     try {
       await this.updateRunStatus(payload.runId, "processing");
+      this.publishRunStreamEvent({
+        type: RUN_STREAM_EVENT_TYPE.RUN_STARTED,
+        payload: {
+          runId: payload.runId,
+          threadId: payload.threadId,
+          model: payload.model,
+        },
+      });
+
       const completedEvent = await this.buildCompletedEvent(requestedEvent);
       await this.eventBus.publish(completedEvent);
       await this.updateRunStatus(payload.runId, "completed");
+      this.publishRunStreamEvent({
+        type: RUN_STREAM_EVENT_TYPE.RUN_COMPLETED,
+        payload: {
+          runId: payload.runId,
+          threadId: payload.threadId,
+        },
+      });
       this.logger.info("runtime.event.processed", {
         eventId: event.id,
       });
@@ -120,6 +144,14 @@ export class AgentRuntime {
       const failedEvent = this.buildFailedEvent(requestedEvent, safeError);
       await this.eventBus.publish(failedEvent);
       await this.updateRunStatus(payload.runId, "failed", safeError);
+      this.publishRunStreamEvent({
+        type: RUN_STREAM_EVENT_TYPE.RUN_FAILED,
+        payload: {
+          runId: payload.runId,
+          threadId: payload.threadId,
+          error: safeError,
+        },
+      });
       this.logger.error("runtime.event.failed", {
         eventId: event.id,
       });
@@ -149,18 +181,60 @@ export class AgentRuntime {
       {
         runId: payload.runId,
         threadId: payload.threadId,
+        model: payload.model,
         messages: promptMessages,
       },
       {
         onEvent: async (loopEvent) => {
+          if (loopEvent.type === "assistant.token") {
+            this.publishRunStreamEvent({
+              type: RUN_STREAM_EVENT_TYPE.ASSISTANT_TOKEN,
+              payload: {
+                runId: loopEvent.payload.runId,
+                threadId: loopEvent.payload.threadId,
+                iteration: loopEvent.payload.iteration,
+                delta: loopEvent.payload.delta,
+              },
+            });
+            return;
+          }
+
+          if (loopEvent.type === "tool.called") {
+            this.publishRunStreamEvent({
+              type: RUN_STREAM_EVENT_TYPE.TOOL_STARTED,
+              payload: {
+                runId: loopEvent.payload.runId,
+                threadId: loopEvent.payload.threadId,
+                iteration: loopEvent.payload.iteration,
+                toolName: loopEvent.payload.toolName,
+              },
+            });
+            return;
+          }
+
           if (loopEvent.type !== "assistant.generated") {
             return;
           }
 
+          const persistedContent = this.getPersistedMessageContent(
+            loopEvent.payload.response.message,
+          );
+
           await this.messageService.createAssistantMessage({
             threadId: loopEvent.payload.threadId,
-            content: this.getPersistedMessageContent(loopEvent.payload.response.message),
+            content: persistedContent,
           });
+
+          if (loopEvent.payload.response.message.role === "assistant") {
+            this.publishRunStreamEvent({
+              type: RUN_STREAM_EVENT_TYPE.ASSISTANT_MESSAGE,
+              payload: {
+                runId: loopEvent.payload.runId,
+                threadId: loopEvent.payload.threadId,
+                message: persistedContent,
+              },
+            });
+          }
         },
       },
     );
@@ -275,5 +349,9 @@ export class AgentRuntime {
     } catch {
       return undefined;
     }
+  }
+
+  private publishRunStreamEvent(event: RunStreamEvent) {
+    this.runStreamService?.publish(event);
   }
 }

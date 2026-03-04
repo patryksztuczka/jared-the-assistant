@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { createId } from "@paralleldrive/cuid2";
+import { upgradeWebSocket } from "hono/bun";
 import {
   createChatMessageRequestSchema,
   type MessageService,
@@ -8,6 +9,7 @@ import { DEFAULT_MODEL } from "./lib/constants";
 import type { EventBus } from "./event-bus/redis-stream";
 import { EVENT_TYPE } from "./event-bus/types";
 import type { RunService } from "./modules/runs/runs-schemas";
+import type { RunStreamService } from "./agent/run-stream-service";
 
 export { websocket } from "hono/bun";
 
@@ -15,6 +17,7 @@ interface CreateAppOptions {
   eventBus: EventBus;
   messageService: MessageService;
   runService: RunService;
+  runStreamService: RunStreamService;
 }
 
 export const createApp = (options: CreateAppOptions) => {
@@ -22,6 +25,7 @@ export const createApp = (options: CreateAppOptions) => {
   const messageService = options.messageService;
   const eventBus = options.eventBus;
   const runService = options.runService;
+  const runStreamService = options.runStreamService;
 
   const threadIdPattern = /^thr_[a-z0-9]{24}$/;
 
@@ -111,6 +115,37 @@ export const createApp = (options: CreateAppOptions) => {
       messages,
     });
   });
+
+  app.get(
+    "/ws/runs/:runId",
+    upgradeWebSocket((c) => {
+      const runId = c.req.param("runId");
+      let unsubscribe: (() => void) | undefined;
+
+      return {
+        onOpen(_, ws) {
+          unsubscribe = runStreamService.subscribe(runId, (event) => {
+            ws.send(JSON.stringify(event));
+          });
+
+          ws.send(
+            JSON.stringify({
+              type: "connection.ready",
+              payload: {
+                runId,
+              },
+            }),
+          );
+        },
+        onClose() {
+          unsubscribe?.();
+        },
+        onError() {
+          unsubscribe?.();
+        },
+      };
+    }),
+  );
 
   return app;
 };

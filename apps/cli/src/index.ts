@@ -12,17 +12,10 @@ interface ChatMessageAcceptedResponse {
   model: string;
 }
 
-interface RunLoopEventRecord {
-  id: string;
-  eventType: "loop.started" | "loop.completed" | "loop.error";
-  payload: unknown;
-}
-
 interface CliConfig {
   baseUrl: string;
   model?: string;
   timeoutMs: number;
-  pollIntervalMs: number;
   threadId?: string;
 }
 
@@ -30,13 +23,11 @@ interface CommandOptions {
   baseUrl: string;
   model?: string;
   timeoutMs: string;
-  pollMs: string;
   threadId?: string;
 }
 
 const DEFAULT_BASE_URL = "http://localhost:3000";
 const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_POLL_INTERVAL_MS = 1000;
 
 const config = parseArgs(process.argv);
 
@@ -77,9 +68,19 @@ const run = async () => {
     activeThreadId = accepted.threadId;
 
     console.log(`Run accepted: ${accepted.runId}`);
-    const streamStatus = await waitForRunStream({
+    let hasPrintedAssistantLabel = false;
+
+    const streamStatus = await waitForRunWebSocket({
       baseUrl: config.baseUrl,
       runId: accepted.runId,
+      timeoutMs: config.timeoutMs,
+      onToken: (delta) => {
+        if (!hasPrintedAssistantLabel) {
+          process.stdout.write("Assistant: ");
+          hasPrintedAssistantLabel = true;
+        }
+        process.stdout.write(delta);
+      },
     });
 
     if (streamStatus.status === "failed") {
@@ -87,8 +88,21 @@ const run = async () => {
       continue;
     }
 
+    if (streamStatus.didStreamTokens) {
+      if (
+        streamStatus.reply &&
+        streamStatus.reply.startsWith(streamStatus.streamedReply) &&
+        streamStatus.reply.length > streamStatus.streamedReply.length
+      ) {
+        process.stdout.write(streamStatus.reply.slice(streamStatus.streamedReply.length));
+      }
+
+      process.stdout.write("\n");
+      continue;
+    }
+
     if (!streamStatus.reply) {
-      console.log("Assistant: (no reply message found yet)");
+      console.log("(no reply message found yet)");
       continue;
     }
 
@@ -106,7 +120,6 @@ function parseArgs(argv: string[]): CliConfig {
     .option("-m, --model <model>", "Model id used for /api/chat/messages")
     .option("--thread-id <id>", "Continue an existing thread")
     .option("--timeout-ms <number>", "Max wait for run completion", `${DEFAULT_TIMEOUT_MS}`)
-    .option("--poll-ms <number>", "Poll interval for run status", `${DEFAULT_POLL_INTERVAL_MS}`)
     .parse(argv);
 
   const options = program.opts<CommandOptions>();
@@ -115,7 +128,6 @@ function parseArgs(argv: string[]): CliConfig {
     baseUrl: options.baseUrl.replace(/\/+$/, ""),
     model: options.model,
     timeoutMs: toPositiveNumber(options.timeoutMs, DEFAULT_TIMEOUT_MS),
-    pollIntervalMs: toPositiveNumber(options.pollMs, DEFAULT_POLL_INTERVAL_MS),
     threadId: options.threadId,
   };
 }
@@ -160,177 +172,142 @@ const sendMessage = async (inputData: {
   return payload as ChatMessageAcceptedResponse;
 };
 
-const waitForRunStream = async (inputData: { baseUrl: string; runId: string }) => {
-  const response = await fetch(`${inputData.baseUrl}/api/chat/runs/${inputData.runId}/stream`);
-  if (!response.ok) {
-    throw new Error(`Failed to stream run status (${response.status})`);
-  }
+const waitForRunWebSocket = async (inputData: {
+  baseUrl: string;
+  runId: string;
+  timeoutMs: number;
+  onToken?: (delta: string) => void;
+}) => {
+  const wsUrl = toWebSocketUrl(`${inputData.baseUrl}/ws/runs/${inputData.runId}`);
 
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error("No response body available to read stream");
-  }
+  return await new Promise<{
+    status: RunStatus;
+    safeError?: string;
+    reply?: string;
+    streamedReply: string;
+    didStreamTokens: boolean;
+  }>((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    let hasSettled = false;
+    let finalStatus: RunStatus = "processing";
+    let safeError: string | undefined;
+    let reply: string | undefined;
+    let streamedReply = "";
+    let didStreamTokens = false;
 
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let finalStatus: RunStatus = "processing";
-  let safeError: string | undefined;
-  let reply: string | undefined;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-
-    let newlineIndex: number;
-    while ((newlineIndex = buffer.indexOf("\n\n")) >= 0) {
-      const chunk = buffer.slice(0, newlineIndex);
-      buffer = buffer.slice(newlineIndex + 2);
-
-      const lines = chunk.split("\n");
-      let eventType = "message";
-      let eventData = "";
-
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          eventType = line.slice(7);
-        } else if (line.startsWith("data: ")) {
-          eventData = line.slice(6);
-        }
+    const settleResolve = () => {
+      if (hasSettled) {
+        return;
       }
 
-      if (!eventData) {
-        continue;
+      hasSettled = true;
+      clearTimeout(timeoutId);
+      resolve({
+        status: finalStatus,
+        safeError,
+        reply,
+        streamedReply,
+        didStreamTokens,
+      });
+    };
+
+    const settleReject = (error: Error) => {
+      if (hasSettled) {
+        return;
       }
 
+      hasSettled = true;
+      clearTimeout(timeoutId);
+      reject(error);
+    };
+
+    const timeoutId = setTimeout(() => {
+      ws.close(1000, "timeout");
+      settleReject(new Error(`Run did not finish within ${inputData.timeoutMs}ms`));
+    }, inputData.timeoutMs);
+
+    ws.addEventListener("message", (event) => {
       try {
-        const payload = JSON.parse(eventData);
+        const raw = typeof event.data === "string" ? event.data : String(event.data);
+        const payload = JSON.parse(raw) as { type?: string; payload?: unknown };
 
-        switch (eventType) {
-          case "run.event": {
-            const mapped = mapEventForDisplay(payload as RunLoopEventRecord);
-            if (mapped) {
-              console.log(mapped);
+        if (!payload.type) {
+          return;
+        }
+
+        switch (payload.type) {
+          case "assistant.token": {
+            const tokenPayload = payload.payload as { delta?: unknown };
+            if (typeof tokenPayload.delta === "string" && tokenPayload.delta.length > 0) {
+              streamedReply += tokenPayload.delta;
+              didStreamTokens = true;
+              inputData.onToken?.(tokenPayload.delta);
             }
             break;
           }
-          case "run.status": {
-            finalStatus = payload.status;
-            safeError = payload.safeError;
+          case "assistant.message": {
+            const messagePayload = payload.payload as { message?: unknown };
+            if (typeof messagePayload.message === "string") {
+              reply = messagePayload.message;
+            }
             break;
           }
-          case "run.reply": {
-            reply = payload.content;
+          case "tool.started": {
+            const toolPayload = payload.payload as { toolName?: unknown };
+            if (typeof toolPayload.toolName === "string" && toolPayload.toolName.length > 0) {
+              process.stdout.write(`\n[tool] ${formatToolName(toolPayload.toolName)}\n`);
+            }
+            break;
+          }
+          case "run.failed": {
+            const failedPayload = payload.payload as { error?: unknown };
+            finalStatus = "failed";
+            safeError = typeof failedPayload.error === "string" ? failedPayload.error : undefined;
+            ws.close(1000, "run failed");
+            break;
+          }
+          case "run.completed": {
+            finalStatus = "completed";
+            ws.close(1000, "run completed");
+            break;
+          }
+          case "connection.ready":
+          case "run.started": {
             break;
           }
         }
       } catch (error) {
-        console.error("Failed to parse SSE event data:", error);
+        const message = error instanceof Error ? error.message : "Unknown error";
+        settleReject(new Error(`Failed to parse WebSocket message: ${message}`));
+        ws.close(1011, "parse failure");
       }
-    }
-  }
-
-  return { status: finalStatus, safeError, reply };
-};
-
-const mapEventForDisplay = (event: RunLoopEventRecord) => {
-  if (event.eventType === "loop.started") {
-    const prompt = getPromptContent(event.payload);
-    if (!prompt) {
-      return "Agent started processing";
-    }
-    return `Agent started: "${prompt}"`;
-  }
-
-  if (event.eventType === "loop.error") {
-    const error = getErrorContent(event.payload);
-    if (!error) {
-      return "Agent error";
-    }
-    return `Agent error: ${error}`;
-  }
-};
-
-const getErrorContent = (payload: unknown) => {
-  if (!payload || typeof payload !== "object") {
-    return;
-  }
-
-  const payloadRecord = payload as Record<string, unknown>;
-  const error = payloadRecord.error;
-  return typeof error === "string" ? error : undefined;
-};
-
-const getPromptContent = (payload: unknown) => {
-  if (!payload || typeof payload !== "object") {
-    return;
-  }
-
-  const payloadRecord = payload as Record<string, unknown>;
-  const prompt = payloadRecord.prompt;
-
-  if (typeof prompt === "string") {
-    return prompt;
-  }
-
-  if (!prompt || typeof prompt !== "object") {
-    return;
-  }
-
-  const promptRecord = prompt as Record<string, unknown>;
-  const content = promptRecord.content;
-  return toContentString(content);
-};
-
-const getOutputContent = (payload: unknown) => {
-  if (!payload || typeof payload !== "object") {
-    return;
-  }
-
-  const payloadRecord = payload as Record<string, unknown>;
-  const output = payloadRecord.output;
-
-  if (typeof output === "string") {
-    return output;
-  }
-
-  if (!output || typeof output !== "object") {
-    return;
-  }
-
-  const outputRecord = output as Record<string, unknown>;
-  return toContentString(outputRecord.response);
-};
-
-const toContentString = (content: unknown) => {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (!Array.isArray(content)) {
-    return;
-  }
-
-  const textParts = content
-    .filter((item) => {
-      return Boolean(item && typeof item === "object" && "type" in item && "text" in item);
-    })
-    .map((item) => {
-      const text = (item as { text: unknown }).text;
-      return typeof text === "string" ? text : "";
-    })
-    .filter((text) => {
-      return text.length > 0;
     });
 
-  if (textParts.length === 0) {
-    return;
-  }
+    ws.addEventListener("close", () => {
+      settleResolve();
+    });
 
-  return textParts.join(" ");
+    ws.addEventListener("error", () => {
+      settleReject(new Error("WebSocket connection failed"));
+    });
+  });
+};
+
+const toWebSocketUrl = (url: string) => {
+  const parsed = new URL(url);
+  parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+  return parsed.toString();
+};
+
+const formatToolName = (toolName: string) => {
+  return toolName
+    .replaceAll(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replaceAll(/[_-]+/g, " ")
+    .trim()
+    .replaceAll(/\s+/g, " ")
+    .replaceAll(/\b\w/g, (character) => {
+      return character.toUpperCase();
+    });
 };
 
 await run().catch((error: unknown) => {
