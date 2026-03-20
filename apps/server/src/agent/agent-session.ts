@@ -4,8 +4,8 @@ import type { MessageService } from "../modules/messages/messages-schemas";
 import type { RunService } from "../modules/runs/runs-schemas";
 import { RUN_STREAM_EVENT_TYPE, type RunStreamService } from "./run-stream-service";
 import type { LangfusePromptService } from "../modules/llm/langfuse-service";
-import { Agent } from "./agent";
-import type { AgentEvent } from "./agent-event";
+import { AgentLoop } from "./agent-loop";
+import type { AgentLoopEvent } from "./agent-event";
 import {
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_MODEL,
@@ -58,18 +58,18 @@ export class AgentSession {
       );
       const systemPrompt = await this.langfuseService.getSystemPrompt();
 
-      const agent = new Agent({
+      const agentLoop = new AgentLoop({
         systemPrompt: systemPrompt ?? "",
         model,
         tools: this.tools,
         maxIterations: DEFAULT_MAX_ITERATIONS,
       });
 
-      agent.subscribe((event: AgentEvent) => {
-        this.handleAgentEvent(event, runId, threadId);
+      agentLoop.subscribe((event: AgentLoopEvent) => {
+        this.handleAgentLoopEvent(event, runId, threadId);
       });
 
-      const result = await agent.run(messages);
+      const result = await agentLoop.run(messages);
 
       if (result.reason === "error") {
         await this.runService.updateRunStatus({ runId, status: "failed", error: result.error });
@@ -94,7 +94,7 @@ export class AgentSession {
     }
   }
 
-  private handleAgentEvent(event: AgentEvent, runId: string, threadId: string) {
+  private handleAgentLoopEvent(event: AgentLoopEvent, runId: string, threadId: string) {
     switch (event.type) {
       case "agent.token": {
         this.runStreamService.publish({

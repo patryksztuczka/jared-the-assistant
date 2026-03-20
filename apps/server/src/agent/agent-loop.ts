@@ -9,49 +9,49 @@ import {
 } from "ai";
 import { z } from "zod";
 
-import type { AgentEvent, AgentStopReason } from "./agent-event";
+import type { AgentLoopEvent, AgentLoopStopReason } from "./agent-event";
 
 const assistantOutputSchema = z.object({
   action: z.enum(["continue", "finish"]),
   response: z.string().min(1).nullable(),
 });
 
-interface AgentOptions {
+interface AgentLoopOptions {
   systemPrompt: string;
   model: string;
   tools?: ToolSet;
   maxIterations?: number;
 }
 
-export interface AgentRunResult {
-  reason: AgentStopReason;
+export interface AgentLoopRunResult {
+  reason: AgentLoopStopReason;
   error?: string;
 }
 
-type AgentListener = (event: AgentEvent) => void;
+type AgentLoopListener = (event: AgentLoopEvent) => void;
 
-export class Agent {
+export class AgentLoop {
   private readonly systemPrompt: string;
   private readonly model: string;
   private readonly tools: ToolSet;
   private readonly maxIterations: number;
-  private readonly listeners = new Set<AgentListener>();
+  private readonly listeners = new Set<AgentLoopListener>();
 
-  constructor(options: AgentOptions) {
+  constructor(options: AgentLoopOptions) {
     this.systemPrompt = options.systemPrompt;
     this.model = options.model;
     this.tools = options.tools ?? {};
     this.maxIterations = options.maxIterations ?? 5;
   }
 
-  subscribe(listener: AgentListener): () => void {
+  subscribe(listener: AgentLoopListener): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
     };
   }
 
-  async run(messages: ModelMessage[]): Promise<AgentRunResult> {
+  async run(messages: ModelMessage[]): Promise<AgentLoopRunResult> {
     this.emit({ type: "agent.start", model: this.model });
 
     try {
@@ -83,7 +83,6 @@ export class Agent {
           },
         });
 
-        // Stream partial text deltas
         let streamedResponse = "";
         for await (const partialOutput of result.partialOutputStream) {
           const partialResponse = this.getPartialResponseText(partialOutput);
@@ -96,18 +95,20 @@ export class Agent {
           this.emit({ type: "agent.token", delta, iteration });
         }
 
-        // Get the full response messages (assistant + tool results if any)
         const response = await result.response;
         const toolResults = await result.toolResults;
         const toolResult = toolResults.at(0);
 
         if (toolResult) {
-          // Push all response messages (assistant with tool_calls + tool results)
           for (const msg of response.messages) {
             promptMessages.push(msg);
           }
-          this.emit({ type: "tool.end", toolName: toolResult.toolName, result: toolResult.output, iteration });
-          // Emit message.complete for the tool result message (last in response.messages)
+          this.emit({
+            type: "tool.end",
+            toolName: toolResult.toolName,
+            result: toolResult.output,
+            iteration,
+          });
           const toolMessage = response.messages.at(-1);
           if (toolMessage) {
             this.emit({ type: "message.complete", message: toolMessage as ToolModelMessage });
@@ -124,7 +125,7 @@ export class Agent {
         iterationsCalled += 1;
       }
 
-      const reason: AgentStopReason = lastAction === "finish" ? "finish" : "max_iterations";
+      const reason: AgentLoopStopReason = lastAction === "finish" ? "finish" : "max_iterations";
       this.emit({ type: "agent.end", reason });
       return { reason };
     } catch (error) {
@@ -192,7 +193,7 @@ export class Agent {
     };
   }
 
-  private emit(event: AgentEvent): void {
+  private emit(event: AgentLoopEvent): void {
     for (const listener of this.listeners) {
       listener(event);
     }
