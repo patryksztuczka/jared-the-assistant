@@ -1,32 +1,17 @@
 import { openai } from "@ai-sdk/openai";
 import {
-  Output,
   streamText,
   type AssistantModelMessage,
   type ModelMessage,
   type ToolModelMessage,
   type ToolSet,
 } from "ai";
-import { z } from "zod";
 
 import type { AgentEvent, AgentStopReason } from "./agent-event";
-
-const agentOutputSchema = z.object({
-  action: z.enum(["continue", "finish"]),
-  response: z.string().min(1).nullable(),
-});
+import type { Module } from "node:vm";
 
 const DEFAULT_MAX_ITERATIONS = 5;
-
-export interface AgentOptions {
-  instructions?: string;
-  systemPrompt?: string;
-  model: string;
-  tools?: ToolSet;
-  maxIterations?: number;
-  telemetry?: boolean;
-  initialState?: Partial<Pick<AgentState, "messages" | "model">>;
-}
+const DEFAULT_MODEL = "gpt-5-nano";
 
 export interface AgentRunResult {
   reason: AgentStopReason;
@@ -37,34 +22,38 @@ export interface AgentRunInput {
   messages: ModelMessage[];
 }
 
-export interface AgentState {
-  messages: ModelMessage[];
-  model: string;
-  isRunning: boolean;
-  error?: string;
-  stopReason?: AgentStopReason;
-}
-
 type AgentListener = (event: AgentEvent) => void;
 
+export type AgentState = {
+  systemPrompt?: string;
+  messages: ModelMessage[];
+  model: string;
+  tools: ToolSet;
+  isRunning: boolean;
+};
+
+export interface AgentOptions {
+  initialState: Partial<Omit<AgentState, "isRunning">>;
+  maxIterations?: number;
+  telemetry?: boolean;
+}
+
 export class Agent {
-  private instructions: string;
-  private readonly tools: ToolSet;
-  private readonly maxIterations: number;
-  private readonly telemetry: boolean;
+  private readonly state: AgentState = {
+    systemPrompt: "",
+    messages: [],
+    model: DEFAULT_MODEL,
+    tools: {},
+    isRunning: false,
+  };
+  private readonly maxIterations: number = DEFAULT_MAX_ITERATIONS;
+  private readonly telemetry: boolean = false;
   private readonly listeners = new Set<AgentListener>();
-  readonly state: AgentState;
 
   constructor(options: AgentOptions) {
-    this.instructions = options.instructions ?? options.systemPrompt ?? "";
-    this.tools = options.tools ?? {};
-    this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
-    this.telemetry = options.telemetry ?? false;
-    this.state = {
-      messages: options.initialState?.messages ?? [],
-      model: options.initialState?.model ?? options.model,
-      isRunning: false,
-    };
+    this.state = { ...this.state, ...options.initialState };
+    this.maxIterations = options.maxIterations ?? this.maxIterations;
+    this.telemetry = options.telemetry ?? this.telemetry;
   }
 
   subscribe(listener: AgentListener): () => void {
@@ -72,10 +61,6 @@ export class Agent {
     return () => {
       this.listeners.delete(listener);
     };
-  }
-
-  setInstructions(instructions: string | undefined) {
-    this.instructions = instructions ?? "";
   }
 
   setModel(model: string) {
@@ -86,38 +71,68 @@ export class Agent {
     this.state.messages = messages;
   }
 
-  appendMessage(message: ModelMessage) {
-    this.state.messages.push(message);
+  appendMessages(messages: ModelMessage[]) {
+    this.state.messages.push(...messages);
   }
 
   clearMessages() {
     this.state.messages = [];
   }
 
-  async run(input?: AgentRunInput | ModelMessage[]): Promise<AgentRunResult> {
-    const messages = input ? (Array.isArray(input) ? input : input.messages) : this.state.messages;
-    const conversationMessages = [...messages];
+  public async prompt(input: string | ModelMessage | ModelMessage[]) {
+    let contexMessages = this.state.messages.slice();
+    let prompt: ModelMessage[];
+    if (Array.isArray(input)) {
+      prompt = input;
+    } else if (typeof input === "string") {
+      prompt = [
+        {
+          role: "user",
+          content: input,
+        },
+      ];
+    } else {
+      prompt = [input];
+    }
 
-    this.state.messages = conversationMessages;
-    this.state.isRunning = true;
-    this.state.error = undefined;
-    this.state.stopReason = undefined;
+    const context = {
+      model: this.state.model,
+      systemPrompt: this.state.systemPrompt,
+      prompt,
+      messages: contexMessages,
+    };
 
-    this.emit({ type: "agent.start", model: this.state.model });
+    const result = await this.runLoop(context);
 
+    if (result.reason === "finish" || result.reason === "max_iterations") {
+      this.appendMessages(result.messages);
+    }
+  }
+
+  private async runLoop(context: {
+    model: string;
+    systemPrompt?: string;
+    prompt: ModelMessage[];
+    messages: ModelMessage[];
+  }) {
     try {
+      this.emit({ type: "agent.start", model: this.state.model });
       let iterationsCalled = 0;
-      let lastAction: "continue" | "finish" = "continue";
+      let lastMessageType: "tool" | "agent" | undefined;
+      const turnMessages: ModelMessage[] = context.prompt;
 
-      while (iterationsCalled < this.maxIterations && lastAction === "continue") {
+      while (iterationsCalled < this.maxIterations && lastMessageType !== "agent") {
         const iteration = iterationsCalled + 1;
         const reportedToolCallIds = new Set<string>();
 
         const result = streamText({
-          model: openai(this.state.model),
-          messages: this.buildPromptMessages(conversationMessages),
-          output: Output.object({ schema: agentOutputSchema }),
-          tools: this.tools,
+          model: openai(context.model),
+          messages: [
+            { role: "system", content: context.systemPrompt },
+            ...context.messages,
+            ...turnMessages,
+          ],
+          tools: this.state.tools,
           experimental_telemetry: this.telemetry ? { isEnabled: true } : undefined,
           onChunk: ({ chunk }) => {
             if (chunk.type !== "tool-call") {
@@ -135,23 +150,17 @@ export class Agent {
 
         let streamedResponse = "";
         for await (const partialOutput of result.partialOutputStream) {
-          const partialResponse = this.getPartialResponseText(partialOutput);
-          if (!partialResponse || partialResponse.length <= streamedResponse.length) {
-            continue;
-          }
-
-          const delta = partialResponse.slice(streamedResponse.length);
-          streamedResponse = partialResponse;
+          const delta = partialOutput.slice(streamedResponse.length);
+          streamedResponse = partialOutput;
           this.emit({ type: "agent.token", delta, iteration });
         }
 
         const response = await result.response;
-        const toolResults = await result.toolResults;
-        const toolResult = toolResults.at(0);
+        const toolResult = (await result.toolResults).at(0);
 
         if (toolResult) {
           for (const message of response.messages) {
-            conversationMessages.push(message);
+            turnMessages.push(message);
           }
 
           this.emit({
@@ -166,62 +175,29 @@ export class Agent {
             this.emit({ type: "message.complete", message: toolMessage as ToolModelMessage });
           }
 
-          lastAction = "continue";
+          lastMessageType = "tool";
         } else {
           const output = await result.output;
-          const agentMessage = this.buildAgentMessage(output.response);
-          conversationMessages.push(agentMessage);
+          const agentMessage: AssistantModelMessage = {
+            role: "assistant",
+            content: output,
+          };
+          turnMessages.push(agentMessage);
           this.emit({ type: "message.complete", message: agentMessage });
-          lastAction = output.action;
+          lastMessageType = "agent";
         }
 
         iterationsCalled += 1;
       }
 
-      const reason: AgentStopReason = lastAction === "finish" ? "finish" : "max_iterations";
-      this.state.stopReason = reason;
+      const reason: AgentStopReason = lastMessageType === "agent" ? "finish" : "max_iterations";
       this.emit({ type: "agent.end", reason });
-      return { reason };
+      return { reason, messages: turnMessages };
     } catch (error) {
       const safeError = error instanceof Error ? error.message : "unknown";
-      this.state.error = safeError;
-      this.state.stopReason = "error";
       this.emit({ type: "agent.end", reason: "error", error: safeError });
-      return { reason: "error", error: safeError };
-    } finally {
-      this.state.isRunning = false;
+      return { reason: "error" as AgentStopReason, error: safeError, messages: [] };
     }
-  }
-
-  private buildPromptMessages(messages: ModelMessage[]): ModelMessage[] {
-    const result: ModelMessage[] = [];
-
-    if (this.instructions) {
-      result.push({ role: "system", content: this.instructions });
-    }
-
-    result.push(...messages);
-    return result;
-  }
-
-  private getPartialResponseText(partialOutput: unknown): string | undefined {
-    if (!partialOutput || typeof partialOutput !== "object") {
-      return undefined;
-    }
-
-    const response = (partialOutput as { response?: unknown }).response;
-    if (typeof response !== "string") {
-      return undefined;
-    }
-
-    return response;
-  }
-
-  private buildAgentMessage(response: string | null): AssistantModelMessage {
-    return {
-      role: "assistant",
-      content: response ?? "No content",
-    };
   }
 
   private emit(event: AgentEvent): void {

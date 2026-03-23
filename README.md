@@ -2,14 +2,17 @@
 
 There are plenty of cool Jarreds out there. Jarred Dunn from Silicon Valley, the guy who somehow kept Pied Piper from imploding. Jarred Sumner, the creator of Bun, who decided the JavaScript ecosystem needed yet another runtime and was actually right about it. So when I needed a name for my AI agent SDK experiment, the choice was obvious. It had to be Jarred.
 
+Huge shout-out to Mario Zechner, creator of pi agent. Maybe he is not Jarred, but he is also cool, and his code was genuinely helpful while I was discovering this topic.
+
 ## What is Jarred?
 
-Jarred is a personal, experimental TypeScript SDK for building AI agents. It's a flexible base for testing new concepts and exploring ideas — not something you should use in production. It gives you the primitives — agent loop, tool execution, session management, event streaming — without burying you in abstractions.
+Jarred is a personal, experimental TypeScript SDK for building AI agents. It is a flexible base for testing new concepts and exploring ideas, not something you should use in production. It gives you the primitives - agent loop, tool execution, stateful message history, and event streaming - without burying you in abstractions.
 
-### Packages
+Jarred is built on top of Vercel's AI SDK.
 
-- **`@jarred/agent-core`** — Core agent runtime with tool support and event system
-- **`@jarred/agent-session`** — Session layer for multi-turn conversations
+## Packages
+
+- `@jarred/agent-core` - core agent runtime, event system, and built-in tools like `webfetch`, `readWorkingMemory`, and `updateWorkingMemory`
 
 ## Quick Start
 
@@ -17,23 +20,34 @@ Jarred is a personal, experimental TypeScript SDK for building AI agents. It's a
 pnpm add @jarred/agent-core
 ```
 
-```typescript
-import { Agent } from "@jarred/agent-core";
+```ts
+import { Agent, webfetch } from "@jarred/agent-core";
 
 const agent = new Agent({
-  model: "gpt-5-nano",
-  instructions: "You are a helpful assistant.",
-  tools: {},
+  initialState: {
+    model: "gpt-5-nano",
+    systemPrompt: "You are a helpful assistant.",
+    tools: { webfetch },
+  },
 });
 
-const result = await agent.run({
-  prompt: "Hello, what can you do?",
+agent.subscribe((event) => {
+  if (event.type === "agent.token") {
+    process.stdout.write(event.delta);
+  }
 });
+
+await agent.prompt("Hello, what can you do?");
 ```
+
+## Examples
+
+- `examples/api-server` - a small Hono server that streams agent events over SSE and keeps agent state per client IP
+- `examples/chat-ui` - a minimal React chat app that connects to the API server and renders the streaming response
 
 ## Documentation
 
-Full docs coming soon in [`/docs`](./docs/).
+Full docs are still evolving. For now, the code in `packages/agent-core` and the apps in `examples` are the best references.
 
 ## License
 
