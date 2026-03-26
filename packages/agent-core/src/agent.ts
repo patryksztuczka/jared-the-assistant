@@ -1,11 +1,5 @@
 import { openai } from "@ai-sdk/openai";
-import {
-  streamText,
-  type AssistantModelMessage,
-  type ModelMessage,
-  type ToolModelMessage,
-  type ToolSet,
-} from "ai";
+import { streamText, type ModelMessage, type ToolSet } from "ai";
 
 import type { AgentEvent, AgentStopReason } from "./agent-event";
 
@@ -30,24 +24,13 @@ export type AgentReasoningOptions = {
   summary?: "auto" | "detailed";
 };
 
-type AssistantReasoningPart = {
-  type: "reasoning";
-  text: string;
-};
-
-type AssistantTextPart = {
-  type: "text";
-  text: string;
-};
-
-type AssistantContentPart = AssistantReasoningPart | AssistantTextPart | Record<string, unknown>;
-
 export type AgentState = {
   systemPrompt?: string;
   messages: ModelMessage[];
   model: string;
   tools: ToolSet;
   reasoning?: AgentReasoningOptions;
+  parallelToolCalls?: boolean;
   isRunning: boolean;
 };
 
@@ -99,6 +82,10 @@ export class Agent {
 
   setReasoning(reasoning?: AgentReasoningOptions) {
     this.state.reasoning = reasoning;
+  }
+
+  setParallelToolCalls(enabled: boolean) {
+    this.state.parallelToolCalls = enabled;
   }
 
   appendMessages(messages: ModelMessage[]) {
@@ -173,6 +160,9 @@ export class Agent {
                 ? { reasoningSummary: reasoning.summary ?? DEFAULT_REASONING_SUMMARY }
                 : {}),
               ...(reasoning?.effort ? { reasoningEffort: reasoning.effort } : {}),
+              ...(this.state.parallelToolCalls !== undefined
+                ? { parallelToolCalls: this.state.parallelToolCalls }
+                : {}),
             },
           },
           experimental_telemetry: this.telemetry ? { isEnabled: true } : undefined,
@@ -215,6 +205,7 @@ export class Agent {
         }
 
         const response = await result.response;
+
         const toolResult = (await result.toolResults).at(0);
 
         if (toolResult) {

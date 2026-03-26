@@ -61,11 +61,23 @@ app.get("/session", (c) => {
   return c.json({ messages: agent.getMessages() });
 });
 
+app.post("/reset", (c) => {
+  const clientIp = getClientIp(c.req.raw.headers);
+  const agent = agentsByIp.get(clientIp);
+
+  if (agent) {
+    agent.clearMessages();
+  }
+
+  return c.json({ ok: true });
+});
+
 app.post("/message", async (c) => {
-  const { message, reasoningEnabled, reasoningEffort } = await c.req.json<{
+  const { message, reasoningEnabled, reasoningEffort, parallelToolCalls } = await c.req.json<{
     message: string;
     reasoningEnabled?: boolean;
     reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+    parallelToolCalls?: boolean;
   }>();
   const clientIp = getClientIp(c.req.raw.headers);
 
@@ -82,6 +94,10 @@ app.post("/message", async (c) => {
             enabled: false,
           },
     );
+
+    if (parallelToolCalls !== undefined) {
+      agent.setParallelToolCalls(parallelToolCalls);
+    }
 
     let id = 0;
 

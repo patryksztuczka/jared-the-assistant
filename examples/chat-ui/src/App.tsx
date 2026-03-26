@@ -286,6 +286,7 @@ export default function App() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [reasoningEnabled, setReasoningEnabled] = useState(true);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
+  const [parallelToolCalls, setParallelToolCalls] = useState(true);
   const [showSkeleton, setShowSkeleton] = useState(false);
   const streamingContentRef = useRef("");
   const streamingReasoningRef = useRef("");
@@ -338,6 +339,7 @@ export default function App() {
           message: trimmed,
           reasoningEnabled,
           reasoningEffort: reasoningEnabled ? reasoningEffort : undefined,
+          parallelToolCalls,
         }),
       });
 
@@ -507,6 +509,21 @@ export default function App() {
       <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-700">
         <div className="h-2 w-2 rounded-full bg-emerald-500" />
         <h1 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Agent Chat</h1>
+        <button
+          onClick={async () => {
+            if (isStreaming) return;
+            try {
+              await fetch(`${API_URL}/reset`, { method: "POST" });
+              setMessages([]);
+            } catch (err) {
+              console.error("Failed to reset:", err);
+            }
+          }}
+          disabled={isStreaming}
+          className="ml-auto cursor-pointer rounded-md px-2.5 py-1 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+        >
+          Reset
+        </button>
       </header>
 
       {/* Messages */}
@@ -604,6 +621,37 @@ export default function App() {
                 ))}
               </div>
             )}
+            <button
+              onClick={() => !isStreaming && setParallelToolCalls((v) => !v)}
+              disabled={isStreaming}
+              className={`flex cursor-pointer items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
+                parallelToolCalls
+                  ? "bg-violet-600/15 text-violet-400 ring-1 ring-violet-500/30"
+                  : "bg-zinc-800 text-zinc-400 ring-1 ring-zinc-700"
+              }`}
+            >
+              <span
+                className={`flex h-3.5 w-3.5 items-center justify-center rounded transition-colors ${
+                  parallelToolCalls ? "bg-violet-500" : "bg-zinc-600"
+                }`}
+              >
+                {parallelToolCalls && (
+                  <svg
+                    width="8"
+                    height="8"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="white"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+              </span>
+              Parallel Tool Calls
+            </button>
           </div>
           <div className="flex gap-2">
             <input
