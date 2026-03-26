@@ -54,18 +54,48 @@ function getAgentForIp(ip: string) {
 
 app.use("/*", cors());
 
+app.get("/session", (c) => {
+  const clientIp = getClientIp(c.req.raw.headers);
+  const agent = getAgentForIp(clientIp);
+
+  return c.json({ messages: agent.getMessages() });
+});
+
 app.post("/message", async (c) => {
-  const { message } = await c.req.json<{ message: string }>();
+  const { message, reasoningEnabled, reasoningEffort } = await c.req.json<{
+    message: string;
+    reasoningEnabled?: boolean;
+    reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  }>();
   const clientIp = getClientIp(c.req.raw.headers);
 
   return streamSSE(c, async (stream) => {
     const agent = getAgentForIp(clientIp);
+    agent.setReasoning(
+      reasoningEnabled
+        ? {
+            enabled: true,
+            summary: "auto",
+            effort: reasoningEffort,
+          }
+        : {
+            enabled: false,
+          },
+    );
 
     let id = 0;
 
     const done = new Promise<void>((resolve) => {
       const unsubscribe = agent.subscribe((event) => {
-        const streamedTypes = ["agent.start", "agent.end", "agent.token", "message.complete"];
+        const streamedTypes = [
+          "agent.start",
+          "agent.end",
+          "agent.reasoning.start",
+          "agent.reasoning.delta",
+          "agent.reasoning.end",
+          "agent.token",
+          "message.complete",
+        ];
 
         if (!streamedTypes.includes(event.type)) return;
 

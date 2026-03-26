@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type UserMessage = {
   role: "user";
@@ -9,6 +9,7 @@ type AgentTextMessage = {
   role: "agent";
   type: "text";
   content: string;
+  reasoning?: string;
   isStreaming?: boolean;
 };
 
@@ -21,6 +22,15 @@ type AgentToolCallMessage = {
 };
 
 type Message = UserMessage | AgentTextMessage | AgentToolCallMessage;
+
+type SessionModelMessage = {
+  role: string;
+  content: unknown;
+};
+
+type SessionResponse = {
+  messages: SessionModelMessage[];
+};
 
 function ToolCallBubble({
   message,
@@ -89,6 +99,65 @@ function ToolIcon() {
   );
 }
 
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`transition-transform duration-200 ${open ? "rotate-90" : "rotate-0"}`}
+    >
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  );
+}
+
+function ThinkingBlock({ reasoning, isStreaming }: { reasoning: string; isStreaming?: boolean }) {
+  const [expanded, setExpanded] = useState(true);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  // Auto-collapse when streaming finishes
+  useEffect(() => {
+    if (!isStreaming && reasoning) {
+      setExpanded(false);
+    }
+  }, [isStreaming]);
+
+  return (
+    <div className="ml-9.5 mb-1 max-w-[80%]">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-800/50 hover:text-zinc-300"
+      >
+        <ChevronIcon open={expanded} />
+        <span className="tracking-wide">Thinking</span>
+        {isStreaming && (
+          <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-violet-400" />
+        )}
+      </button>
+      <div
+        className="overflow-hidden transition-all duration-200 ease-out"
+        style={{
+          maxHeight: expanded ? `${contentRef.current?.scrollHeight ?? 2000}px` : "0px",
+          opacity: expanded ? 1 : 0,
+        }}
+      >
+        <div
+          ref={contentRef}
+          className="mt-1 ml-2 border-l-2 border-zinc-700/50 pl-3 text-xs leading-relaxed whitespace-pre-wrap text-zinc-500 dark:text-zinc-400"
+        >
+          {reasoning}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AgentAvatar() {
   return (
     <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 dark:bg-violet-900/50 dark:text-violet-400">
@@ -113,13 +182,130 @@ function SkeletonBubble() {
 }
 
 const API_URL = "http://localhost:3001";
+const REASONING_EFFORTS = ["minimal", "low", "medium", "high"] as const;
+
+type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getTextFromContentPart(part: unknown) {
+  if (!isRecord(part) || typeof part.type !== "string") {
+    return undefined;
+  }
+
+  if ((part.type === "text" || part.type === "reasoning") && typeof part.text === "string") {
+    return part.text;
+  }
+
+  return undefined;
+}
+
+function sessionMessagesToUiMessages(messages: SessionModelMessage[]): Message[] {
+  const uiMessages: Message[] = [];
+
+  for (const message of messages) {
+    if (message.role === "user") {
+      if (typeof message.content === "string") {
+        uiMessages.push({ role: "user", content: message.content });
+        continue;
+      }
+
+      if (Array.isArray(message.content)) {
+        const content = message.content
+          .map((part) => getTextFromContentPart(part))
+          .filter((value): value is string => Boolean(value))
+          .join("");
+
+        if (content) {
+          uiMessages.push({ role: "user", content });
+        }
+      }
+
+      continue;
+    }
+
+    if (message.role === "assistant") {
+      if (typeof message.content === "string") {
+        uiMessages.push({ role: "agent", type: "text", content: message.content });
+        continue;
+      }
+
+      if (!Array.isArray(message.content)) {
+        continue;
+      }
+
+      let content = "";
+      let reasoning = "";
+
+      for (const part of message.content) {
+        if (!isRecord(part) || typeof part.type !== "string") {
+          continue;
+        }
+
+        if (part.type === "reasoning" && typeof part.text === "string") {
+          reasoning += part.text;
+        }
+
+        if (part.type === "text" && typeof part.text === "string") {
+          content += part.text;
+        }
+      }
+
+      if (!content && !reasoning) {
+        continue;
+      }
+
+      uiMessages.push({
+        role: "agent",
+        type: "text",
+        content,
+        reasoning: reasoning || undefined,
+      });
+    }
+  }
+
+  return uiMessages;
+}
 
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [reasoningEnabled, setReasoningEnabled] = useState(true);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
   const [showSkeleton, setShowSkeleton] = useState(false);
   const streamingContentRef = useRef("");
+  const streamingReasoningRef = useRef("");
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadSession() {
+      try {
+        const res = await fetch(`${API_URL}/session`);
+        if (!res.ok) {
+          return;
+        }
+
+        const data = (await res.json()) as SessionResponse;
+        if (isCancelled) {
+          return;
+        }
+
+        setMessages(sessionMessagesToUiMessages(data.messages ?? []));
+      } catch (err) {
+        console.error("Failed to load session:", err);
+      }
+    }
+
+    void loadSession();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   async function handleSend() {
     const trimmed = input.trim();
@@ -131,12 +317,17 @@ export default function App() {
     setIsStreaming(true);
     setShowSkeleton(true);
     streamingContentRef.current = "";
+    streamingReasoningRef.current = "";
 
     try {
       const res = await fetch(`${API_URL}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: trimmed }),
+        body: JSON.stringify({
+          message: trimmed,
+          reasoningEnabled,
+          reasoningEffort: reasoningEnabled ? reasoningEffort : undefined,
+        }),
       });
 
       const reader = res.body?.getReader();
@@ -176,6 +367,42 @@ export default function App() {
 
   function handleSSEEvent(event: { type: string; [key: string]: unknown }) {
     switch (event.type) {
+      case "agent.reasoning.start": {
+        if (showSkeleton) setShowSkeleton(false);
+
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "agent" && last.type === "text" && last.isStreaming) {
+            return prev;
+          }
+
+          return [
+            ...prev,
+            { role: "agent", type: "text", content: "", reasoning: "", isStreaming: true },
+          ];
+        });
+        break;
+      }
+      case "agent.reasoning.delta": {
+        const delta = event.delta as string;
+        streamingReasoningRef.current += delta;
+        const reasoning = streamingReasoningRef.current;
+
+        if (showSkeleton) setShowSkeleton(false);
+
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "agent" && last.type === "text" && last.isStreaming) {
+            return [...prev.slice(0, -1), { ...last, reasoning }];
+          }
+
+          return [
+            ...prev,
+            { role: "agent", type: "text", content: "", reasoning, isStreaming: true },
+          ];
+        });
+        break;
+      }
       case "agent.token": {
         const delta = event.delta as string;
         streamingContentRef.current += delta;
@@ -185,33 +412,35 @@ export default function App() {
 
         setMessages((prev) => {
           const last = prev[prev.length - 1];
-          if (
-            last?.role === "agent" &&
-            last.type === "text" &&
-            last.isStreaming
-          ) {
+          if (last?.role === "agent" && last.type === "text" && last.isStreaming) {
             return [
               ...prev.slice(0, -1),
-              { ...last, content },
+              { ...last, content, reasoning: streamingReasoningRef.current },
             ];
           }
           return [
             ...prev,
-            { role: "agent", type: "text", content, isStreaming: true },
+            {
+              role: "agent",
+              type: "text",
+              content,
+              reasoning: streamingReasoningRef.current,
+              isStreaming: true,
+            },
           ];
         });
         break;
       }
-      case "session.complete":
-      case "session.error": {
+      case "agent.end": {
         setMessages((prev) =>
           prev.map((msg) =>
             msg.role === "agent" && msg.type === "text" && msg.isStreaming
               ? { ...msg, isStreaming: false }
-              : msg
-          )
+              : msg,
+          ),
         );
         streamingContentRef.current = "";
+        streamingReasoningRef.current = "";
         break;
       }
     }
@@ -229,8 +458,8 @@ export default function App() {
       prev.map((msg, i) =>
         i === index && msg.role === "agent" && msg.type === "tool_call"
           ? { ...msg, status: "approved" as const }
-          : msg
-      )
+          : msg,
+      ),
     );
   }
 
@@ -239,8 +468,8 @@ export default function App() {
       prev.map((msg, i) =>
         i === index && msg.role === "agent" && msg.type === "tool_call"
           ? { ...msg, status: "rejected" as const }
-          : msg
-      )
+          : msg,
+      ),
     );
   }
 
@@ -249,9 +478,7 @@ export default function App() {
       {/* Header */}
       <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-700">
         <div className="h-2 w-2 rounded-full bg-emerald-500" />
-        <h1 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-          Agent Chat
-        </h1>
+        <h1 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Agent Chat</h1>
       </header>
 
       {/* Messages */}
@@ -270,11 +497,18 @@ export default function App() {
 
             if (msg.type === "text") {
               return (
-                <div key={i} className="flex items-start gap-2.5">
-                  <AgentAvatar />
-                  <div className="max-w-[80%] rounded-2xl rounded-bl-md bg-zinc-100 px-4 py-2.5 text-sm whitespace-pre-wrap text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
-                    {msg.content}
-                  </div>
+                <div key={i} className="flex flex-col">
+                  {msg.reasoning ? (
+                    <ThinkingBlock reasoning={msg.reasoning} isStreaming={msg.isStreaming} />
+                  ) : null}
+                  {msg.content ? (
+                    <div className="flex items-start gap-2.5">
+                      <AgentAvatar />
+                      <div className="max-w-[80%] rounded-2xl rounded-bl-md bg-zinc-100 px-4 py-2.5 text-sm whitespace-pre-wrap text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
+                        {msg.content}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               );
             }
@@ -298,22 +532,75 @@ export default function App() {
 
       {/* Input */}
       <div className="border-t border-zinc-200 px-4 py-3 dark:border-zinc-700">
-        <div className="mx-auto flex max-w-2xl gap-2">
-          <input
-            type="text"
-            placeholder="Type a message..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800 outline-none placeholder:text-zinc-400 focus:border-violet-500 focus:ring-1 focus:ring-violet-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
-          />
-          <button
-            onClick={handleSend}
-            disabled={isStreaming || !input.trim()}
-            className="cursor-pointer rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Send
-          </button>
+        <div className="mx-auto flex max-w-2xl flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-3 px-1 py-1">
+            <button
+              onClick={() => !isStreaming && setReasoningEnabled((v) => !v)}
+              disabled={isStreaming}
+              className={`flex cursor-pointer items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
+                reasoningEnabled
+                  ? "bg-violet-600/15 text-violet-400 ring-1 ring-violet-500/30"
+                  : "bg-zinc-800 text-zinc-400 ring-1 ring-zinc-700"
+              }`}
+            >
+              <span
+                className={`flex h-3.5 w-3.5 items-center justify-center rounded transition-colors ${
+                  reasoningEnabled ? "bg-violet-500" : "bg-zinc-600"
+                }`}
+              >
+                {reasoningEnabled && (
+                  <svg
+                    width="8"
+                    height="8"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="white"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+              </span>
+              Reasoning
+            </button>
+            {reasoningEnabled && (
+              <div className="flex items-center gap-1 rounded-full bg-zinc-800 p-0.5 ring-1 ring-zinc-700">
+                {REASONING_EFFORTS.map((effort) => (
+                  <button
+                    key={effort}
+                    onClick={() => setReasoningEffort(effort)}
+                    disabled={isStreaming}
+                    className={`cursor-pointer rounded-full px-2.5 py-1 text-xs font-medium capitalize transition-all disabled:cursor-not-allowed ${
+                      reasoningEffort === effort
+                        ? "bg-violet-600 text-white shadow-sm"
+                        : "text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    {effort}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Type a message..."
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              className="flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800 outline-none placeholder:text-zinc-400 focus:border-violet-500 focus:ring-1 focus:ring-violet-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
+            />
+            <button
+              onClick={handleSend}
+              disabled={isStreaming || !input.trim()}
+              className="cursor-pointer rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Send
+            </button>
+          </div>
         </div>
       </div>
     </div>

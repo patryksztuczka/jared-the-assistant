@@ -28,16 +28,30 @@ const agent = new Agent({
     model: "gpt-5-nano",
     systemPrompt: "You are a helpful assistant.",
     tools: { webfetch },
+    reasoning: {
+      enabled: true,
+      summary: "auto",
+    },
   },
 });
 
 agent.subscribe((event) => {
+  if (event.type === "agent.reasoning.delta") {
+    process.stderr.write(event.delta);
+  }
+
   if (event.type === "agent.token") {
     process.stdout.write(event.delta);
   }
 });
 
 await agent.prompt("Hello, what can you do?");
+```
+
+Disable reasoning summaries at runtime:
+
+```ts
+agent.setReasoning({ enabled: false });
 ```
 
 ## Examples

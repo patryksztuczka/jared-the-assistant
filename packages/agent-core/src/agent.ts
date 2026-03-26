@@ -11,6 +11,7 @@ import type { AgentEvent, AgentStopReason } from "./agent-event";
 
 const DEFAULT_MAX_ITERATIONS = 5;
 const DEFAULT_MODEL = "gpt-5-nano";
+const DEFAULT_REASONING_SUMMARY = "auto";
 
 export interface AgentRunResult {
   reason: AgentStopReason;
@@ -23,11 +24,30 @@ export interface AgentRunInput {
 
 type AgentListener = (event: AgentEvent) => void;
 
+export type AgentReasoningOptions = {
+  enabled?: boolean;
+  effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  summary?: "auto" | "detailed";
+};
+
+type AssistantReasoningPart = {
+  type: "reasoning";
+  text: string;
+};
+
+type AssistantTextPart = {
+  type: "text";
+  text: string;
+};
+
+type AssistantContentPart = AssistantReasoningPart | AssistantTextPart | Record<string, unknown>;
+
 export type AgentState = {
   systemPrompt?: string;
   messages: ModelMessage[];
   model: string;
   tools: ToolSet;
+  reasoning?: AgentReasoningOptions;
   isRunning: boolean;
 };
 
@@ -50,7 +70,10 @@ export class Agent {
   private readonly listeners = new Set<AgentListener>();
 
   constructor(options: AgentOptions) {
-    this.state = { ...this.state, ...options.initialState };
+    this.state = {
+      ...this.state,
+      ...options.initialState,
+    };
     this.maxIterations = options.maxIterations ?? this.maxIterations;
     this.telemetry = options.telemetry ?? this.telemetry;
   }
@@ -68,6 +91,14 @@ export class Agent {
 
   setMessages(messages: ModelMessage[]) {
     this.state.messages = messages;
+  }
+
+  getMessages() {
+    return this.state.messages.slice();
+  }
+
+  setReasoning(reasoning?: AgentReasoningOptions) {
+    this.state.reasoning = reasoning;
   }
 
   appendMessages(messages: ModelMessage[]) {
@@ -123,6 +154,8 @@ export class Agent {
       while (iterationsCalled < this.maxIterations && lastMessageType !== "agent") {
         const iteration = iterationsCalled + 1;
         const reportedToolCallIds = new Set<string>();
+        const reasoning = this.state.reasoning;
+        let streamedReasoning = "";
 
         const result = streamText({
           model: openai(context.model),
@@ -134,26 +167,46 @@ export class Agent {
             ...turnMessages,
           ],
           tools: this.state.tools,
-          experimental_telemetry: this.telemetry ? { isEnabled: true } : undefined,
-          onChunk: ({ chunk }) => {
-            if (chunk.type !== "tool-call") {
-              return;
-            }
-
-            if (reportedToolCallIds.has(chunk.toolCallId)) {
-              return;
-            }
-
-            reportedToolCallIds.add(chunk.toolCallId);
-            this.emit({ type: "tool.start", toolName: chunk.toolName, iteration });
+          providerOptions: {
+            openai: {
+              ...(reasoning?.enabled
+                ? { reasoningSummary: reasoning.summary ?? DEFAULT_REASONING_SUMMARY }
+                : {}),
+              ...(reasoning?.effort ? { reasoningEffort: reasoning.effort } : {}),
+            },
           },
+          experimental_telemetry: this.telemetry ? { isEnabled: true } : undefined,
         });
 
-        let streamedResponse = "";
-        for await (const partialOutput of result.partialOutputStream) {
-          const delta = partialOutput.slice(streamedResponse.length);
-          streamedResponse = partialOutput;
-          this.emit({ type: "agent.token", delta, iteration });
+        for await (const part of result.fullStream) {
+          switch (part.type) {
+            case "reasoning-start": {
+              this.emit({ type: "agent.reasoning.start", iteration });
+              break;
+            }
+            case "reasoning-delta": {
+              streamedReasoning += part.text;
+              this.emit({ type: "agent.reasoning.delta", delta: part.text, iteration });
+              break;
+            }
+            case "reasoning-end": {
+              this.emit({ type: "agent.reasoning.end", iteration });
+              break;
+            }
+            case "text-delta": {
+              this.emit({ type: "agent.token", delta: part.text, iteration });
+              break;
+            }
+            case "tool-call": {
+              if (reportedToolCallIds.has(part.toolCallId)) {
+                break;
+              }
+
+              reportedToolCallIds.add(part.toolCallId);
+              this.emit({ type: "tool.start", toolName: part.toolName, iteration });
+              break;
+            }
+          }
         }
 
         const response = await result.response;
@@ -171,17 +224,13 @@ export class Agent {
             iteration,
           });
 
-          const toolMessage = response.messages.at(-1);
-          if (toolMessage) {
-            this.emit({ type: "message.complete", message: toolMessage as ToolModelMessage });
-          }
-
           lastMessageType = "tool";
         } else {
-          const output = await result.output;
-          const agentMessage: AssistantModelMessage = {
+          const msg = response.messages.find((msg) => msg.role === "assistant");
+          if (!msg) throw new Error("No message was generated.");
+          const agentMessage: ModelMessage = {
             role: "assistant",
-            content: output,
+            content: msg.content,
           };
           turnMessages.push(agentMessage);
           this.emit({ type: "message.complete", message: agentMessage });
